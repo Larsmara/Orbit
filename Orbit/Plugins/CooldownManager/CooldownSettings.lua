@@ -8,6 +8,7 @@ if not CDM then return end
 
 local VIEWER_MAP = CDM.viewerMap
 local CooldownUtils = OrbitEngine.CooldownUtils
+local function RelayoutChargeBars(plugin) Orbit.ChargeBarLayout:LayoutChargeBars(plugin) end
 
 -- [ SETTINGS UI ]-----------------------------------------------------------------------------------
 function CDM:AddSettings(dialog, systemFrame)
@@ -30,28 +31,28 @@ function CDM:AddSettings(dialog, systemFrame)
             if not isAnchored then
                 table.insert(schema.controls, {
                     type = "slider", key = "Width", label = "Width", min = 50, max = 400, step = 1, default = 120,
-                    onChange = function(val) self:SetSetting(systemIndex, "Width", val); self:LayoutChargeBars() end,
+                    onChange = function(val) self:SetSetting(systemIndex, "Width", val); RelayoutChargeBars(self) end,
                 })
             end
             table.insert(schema.controls, {
                 type = "slider", key = "Height", label = "Height", min = 6, max = 40, step = 1, default = 12,
-                onChange = function(val) self:SetSetting(systemIndex, "Height", val); self:LayoutChargeBars() end,
+                onChange = function(val) self:SetSetting(systemIndex, "Height", val); RelayoutChargeBars(self) end,
             })
             table.insert(schema.controls, {
                 type = "slider", key = "Spacing", label = "Spacing", min = -5, max = 50, step = 1, default = 0,
-                onChange = function(val) self:SetSetting(systemIndex, "Spacing", val); self:LayoutChargeBars() end,
+                onChange = function(val) self:SetSetting(systemIndex, "Spacing", val); RelayoutChargeBars(self) end,
             })
             table.insert(schema.controls, {
                 type = "slider", key = "TickSize", label = "Tick", min = 0, max = 6, step = 2, default = 6,
                 tooltip = "Width of the leading-edge tick mark (0 = hidden)",
-                onChange = function(val) self:SetSetting(systemIndex, "TickSize", val); self:LayoutChargeBars() end,
+                onChange = function(val) self:SetSetting(systemIndex, "TickSize", val); RelayoutChargeBars(self) end,
             })
         elseif currentTab == "Colors" then
             SB:AddColorCurveSettings(self, schema, systemIndex, systemFrame, {
                 key = "BarColorCurve", label = "Bar Color",
                 onChange = function(curveData)
                     self:SetSetting(systemIndex, "BarColorCurve", curveData)
-                    self:LayoutChargeBars()
+                    RelayoutChargeBars(self)
                 end,
             })
         elseif currentTab == "Visibility" then
