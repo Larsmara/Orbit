@@ -11,6 +11,9 @@ local GlowConfig = Constants.PandemicGlow
 -- [ CONSTANTS ]-------------------------------------------------------------------------------------
 local TRACKED_INDEX = Constants.Cooldown.SystemIndex.Tracked
 local TRACKED_PLACEHOLDER_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+local COOLDOWN_THROTTLE = 0.1
+local TALENT_REPARSE_DELAY = 0.5
+local CURSOR_POLL_INTERVAL = 0.25
 
 local DESAT_CURVE = C_CurveUtil.CreateCurve()
 DESAT_CURVE:AddPoint(0.0, 0)
@@ -98,8 +101,8 @@ function Updater:UpdateTrackedIcon(plugin, icon)
         texture = C_Spell.GetSpellTexture(activeId)
         if texture then
             icon.Icon:SetTexture(texture)
-            local cdInfo = C_Spell.GetSpellCooldown(activeId) or {}
-            local onGCD = cdInfo.isOnGCD
+            local cdInfo = C_Spell.GetSpellCooldown(activeId)
+            local onGCD = cdInfo and cdInfo.isOnGCD
             local chargeInfo = icon.isChargeSpell and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(activeId)
 
             if chargeInfo then
@@ -142,7 +145,7 @@ function Updater:UpdateTrackedIcon(plugin, icon)
                     icon.Cooldown:SetCooldownFromDurationObject(durObj, true)
                     icon.Icon:SetDesaturation(onGCD and 0 or durObj:EvaluateRemainingPercent(icon.desatCurve or DESAT_CURVE))
                     if icon.cdAlphaCurve then icon.Cooldown:SetAlpha(durObj:EvaluateRemainingPercent(icon.cdAlphaCurve)) end
-                    local onRealCD = issecretvalue(cdInfo.startTime) or cdInfo.startTime > 0
+                    local onRealCD = cdInfo and (issecretvalue(cdInfo.startTime) or cdInfo.startTime > 0)
                     if icon.activeDuration and onRealCD and not onGCD then
                         icon.ActiveCooldown:SetCooldown(cdInfo.startTime, icon.activeDuration)
                     else
@@ -276,12 +279,14 @@ function Updater:UpdateTrackedIconsDisplay(plugin, anchor)
     end
 end
 
--- [ TICKER ]----------------------------------------------------------------------------------------
+-- [ EVENT-DRIVEN UPDATE ]----------------------------------------------------------------------------
 function Updater:StartTrackedUpdateTicker(plugin)
-    if plugin.trackedTicker then return end
+    if plugin._trackedEventSetup then return end
+    plugin._trackedEventSetup = true
     local Layout = Orbit.TrackedLayout
     local viewerMap = plugin.viewerMap
-    plugin.trackedTicker = C_Timer.NewTicker(Constants.Timing.IconMonitorInterval, function()
+    local nextUpdate = 0
+    local function DoUpdate()
         local entry = viewerMap[TRACKED_INDEX]
         if entry and entry.anchor then
             if Layout:HasUsabilityChanged(entry.anchor) then
@@ -305,7 +310,18 @@ function Updater:StartTrackedUpdateTicker(plugin)
                 end
             end
         end
+    end
+    local frame = CreateFrame("Frame")
+    frame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+    frame:RegisterEvent("BAG_UPDATE_COOLDOWN")
+    frame:RegisterEvent("SPELLS_CHANGED")
+    frame:SetScript("OnEvent", function()
+        local now = GetTime()
+        if now < nextUpdate then return end
+        nextUpdate = now + COOLDOWN_THROTTLE
+        DoUpdate()
     end)
+    plugin._trackedEventFrame = frame
 end
 
 -- [ TALENT REPARSE ]--------------------------------------------------------------------------------
@@ -344,21 +360,7 @@ function Updater:ReparseActiveDurations(plugin)
     end
 end
 
-function Updater:RegisterTalentWatcher(plugin)
-    if plugin.talentWatcherSetup then return end
-    plugin.talentWatcherSetup = true
-    local TALENT_REPARSE_DELAY = 0.5
-    local frame = CreateFrame("Frame")
-    frame:RegisterEvent("TRAIT_CONFIG_UPDATED")
-    frame:SetScript("OnEvent", function()
-        C_Timer.After(TALENT_REPARSE_DELAY, function()
-            if InCombatLockdown() then return end
-            self:ReparseActiveDurations(plugin)
-            plugin:RefreshChargeMaxCharges()
-            self:RefreshAllTrackedLayouts(plugin)
-        end)
-    end)
-end
+-- RegisterTalentWatcher: talent events handled by RegisterSpellCastWatcher (TRAIT_CONFIG_UPDATED)
 
 function Updater:RefreshAllTrackedLayouts(plugin)
     local viewerMap = plugin.viewerMap
@@ -384,15 +386,24 @@ function Updater:ReloadTrackedForSpec(plugin)
     end
     plugin:ReloadChargeBarsForSpec()
 end
-
--- [ SPELL CAST WATCHER ]----------------------------------------------------------------------------
 function Updater:RegisterSpellCastWatcher(plugin)
     if plugin.spellCastWatcherSetup then return end
     plugin.spellCastWatcherSetup = true
+
     local viewerMap = plugin.viewerMap
     local frame = CreateFrame("Frame")
     frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-    frame:SetScript("OnEvent", function(_, _, unit, _, spellId)
+    frame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+    frame:SetScript("OnEvent", function(_, event, unit, _, spellId)
+        if event == "TRAIT_CONFIG_UPDATED" then
+            C_Timer.After(TALENT_REPARSE_DELAY, function()
+                if InCombatLockdown() then return end
+                self:ReparseActiveDurations(plugin)
+                plugin:RefreshChargeMaxCharges()
+                self:RefreshAllTrackedLayouts(plugin)
+            end)
+            return
+        end
         if unit ~= "player" then return end
         local function CheckAnchor(anchor)
             if not anchor or not anchor.activeIcons then return end
@@ -400,7 +411,15 @@ function Updater:RegisterSpellCastWatcher(plugin)
                 local isMatch = (icon.trackedType == "spell" and icon.trackedId == spellId)
                     or (icon.trackedType == "item" and icon.useSpellId == spellId)
                 if isMatch then
-                    if icon.activeDuration then icon._activeGlowExpiry = GetTime() + icon.activeDuration end
+                    if icon.activeDuration then
+                        icon._activeGlowExpiry = GetTime() + icon.activeDuration
+                        local expectedId = icon.trackedId
+                        C_Timer.After(icon.activeDuration, function()
+                            if icon.trackedId ~= expectedId then return end
+                            if icon._activeGlowing then self:StopActiveGlow(icon) end
+                            icon._activeGlowExpiry = nil
+                        end)
+                    end
                     if icon.isChargeSpell then CooldownUtils:OnChargeCast(icon) end
                 end
             end
@@ -443,8 +462,12 @@ function Updater:RegisterCursorWatcher(plugin)
     local lastShift = nil
     local viewerMap = plugin.viewerMap
     local Layout = Orbit.TrackedLayout
+    local accum = 0
     local frame = CreateFrame("Frame")
-    frame:SetScript("OnUpdate", function()
+    frame:SetScript("OnUpdate", function(_, elapsed)
+        accum = accum + elapsed
+        if accum < CURSOR_POLL_INTERVAL then return end
+        accum = 0
         local cursorType = GetCursorInfo()
         local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsShown()
         local isShift = IsShiftKeyDown()
@@ -468,5 +491,8 @@ function Updater:RegisterCursorWatcher(plugin)
                 if isDroppable then childData.frame.DropHighlight:Show() else childData.frame.DropHighlight:Hide() end
             end
         end
+        -- Charge bar cursor updates (merged from separate watcher)
+        plugin:UpdateAllSeedVisibility()
+        plugin:RefreshAllChargeControlVisibility()
     end)
 end
