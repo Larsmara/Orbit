@@ -182,5 +182,10 @@ Plugins\MenuItems\BagBar.lua
 Plugins\MenuItems\Performance.lua
 Plugins\MenuItems\CombatTimer.lua
 
+# Minimap
+Plugins\Minimap\Minimap.lua
+Plugins\Minimap\MinimapCompartment.lua
+Plugins\Minimap\MinimapSettings.lua
+
 # Misc
 Plugins\Misc\TalkingHead.lua

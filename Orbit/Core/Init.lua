@@ -238,6 +238,9 @@ function Orbit:LiveTogglePlugin(name, enabled)
         end
         if plugin.ApplySettings then plugin:ApplySettings() end
     else
+        if plugin.OnDisable then
+            self.ErrorHandler:Wrap(function() plugin:OnDisable() end, name .. ".OnDisable")()
+        end
         if plugin.frame then
             plugin.frame:SetScript("OnEvent", nil)
             plugin.frame:SetScript("OnUpdate", nil)

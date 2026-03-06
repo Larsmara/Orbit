@@ -1422,6 +1422,30 @@ Orbit.Profile.defaults = {
                     Width = 200,
                 },
             },
+            ["Orbit_Minimap"] = {
+                ["Orbit_Minimap"] = {
+                    Anchor = false,
+                    Scale = 100,
+                    Opacity = 100,
+                    Size = 200,
+                    ZoneTextSize = 12,
+                    ZoneTextColoring = false,
+                    DisabledComponents = {},
+                    ComponentPositions = {
+                        ZoneText = { anchorX = "CENTER", offsetX = 0, anchorY = "BOTTOM", offsetY = 4, justifyH = "CENTER" },
+                        Clock = { anchorX = "LEFT", offsetX = 4, anchorY = "BOTTOM", offsetY = 4, justifyH = "LEFT" },
+                        Compartment = { anchorX = "RIGHT", offsetX = 2, anchorY = "BOTTOM", offsetY = 2 },
+                        Calendar = { anchorX = "RIGHT", offsetX = 4, anchorY = "TOP", offsetY = 4 },
+                        Tracking = { anchorX = "LEFT", offsetX = 4, anchorY = "TOP", offsetY = 4 },
+                        Coords = { anchorX = "RIGHT", offsetX = 4, anchorY = "BOTTOM", offsetY = 4, justifyH = "RIGHT" },
+                    },
+                    Position = {
+                        y = -20,
+                        x = -20,
+                        point = "TOPRIGHT",
+                    },
+                },
+            },
             ["Orbit_Performance"] = {
                 ["Orbit_Performance"] = {
                     Anchor = {
