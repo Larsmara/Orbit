@@ -255,8 +255,7 @@ Orbit.Profile.defaults = {
                         point = "CENTER",
                     },
                 },
-                [20] = {
-                },
+                [20] = {},
             },
             ["Orbit_BagBar"] = {
                 ["Orbit_BagBar"] = {
@@ -1143,8 +1142,7 @@ Orbit.Profile.defaults = {
                         align = "CENTER",
                     },
                     Height = 10,
-                    DisabledComponents = {
-                    },
+                    DisabledComponents = {},
                     ComponentPositions = {
                         Text = {
                             offsetX = 4.923077103654316,
@@ -1436,6 +1434,11 @@ Orbit.Profile.defaults = {
                         Clock = { anchorX = "LEFT", offsetX = 4, anchorY = "BOTTOM", offsetY = 4, justifyH = "LEFT" },
                         Compartment = { anchorX = "RIGHT", offsetX = 2, anchorY = "BOTTOM", offsetY = 2 },
                         Coords = { anchorX = "RIGHT", offsetX = 4, anchorY = "BOTTOM", offsetY = 4, justifyH = "RIGHT" },
+                        Zoom = { anchorX = "RIGHT", offsetX = -2, anchorY = "CENTER", offsetY = 0 },
+                        Difficulty = { anchorX = "LEFT", offsetX = 2, anchorY = "TOP", offsetY = -2 },
+                        Missions = { anchorX = "LEFT", offsetX = 2, anchorY = "BOTTOM", offsetY = 2 },
+                        Mail = { anchorX = "RIGHT", offsetX = -2, anchorY = "TOP", offsetY = -2 },
+                        CraftingOrder = { anchorX = "RIGHT", offsetX = -2, anchorY = "TOP", offsetY = -20 },
                     },
                     Position = {
                         y = -20,

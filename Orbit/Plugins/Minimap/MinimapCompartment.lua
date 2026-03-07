@@ -18,11 +18,14 @@ local COMPARTMENT_MAX_WIDTH = 220
 local COMPARTMENT_HIGHLIGHT_TEXTURE = 136810 -- Blizzard white highlight (Interface\BUTTONS\WHITE8x8)
 
 -- Blizzard-owned children of Minimap that must never be collected into the compartment.
+-- Includes reparented Blizzard frames (Missions, Difficulty, etc.) so they are never
+-- accidentally swept up even if timing or parent-chain quirks expose them as Minimap children.
 local BLIZZARD_MINIMAP_CHILDREN = {
     ["MinimapBackdrop"] = true,
     ["MinimapCompassTexture"] = true,
     ["OrbitMinimapCompartmentButton"] = true,
     ["OrbitMinimapCompartmentFlyout"] = true,
+    ["ExpansionLandingPageMinimapButton"] = true,
 }
 
 -- [ COMPARTMENT BUTTON ]----------------------------------------------------------------------------
@@ -52,14 +55,6 @@ function Plugin:CreateCompartmentButton()
     btn.icon:SetPoint("CENTER", 0, 0)
     btn.icon:SetText("+")
     btn.icon:SetTextColor(0.8, 0.8, 0.8, 1)
-
-    -- Canvas-mode icon: uses a standalone square texture (not an atlas) so that the
-    -- IconFrameCreator + ApplyCustom pipeline can trim tex-coords without breaking.
-    btn.Icon = btn:CreateTexture(nil, "ARTWORK")
-    btn.Icon:SetSize(COMPARTMENT_BUTTON_SIZE - 4, COMPARTMENT_BUTTON_SIZE - 4)
-    btn.Icon:SetPoint("CENTER")
-    btn.Icon:SetTexture("Interface\\Icons\\INV_Misc_EngGizmos_30")
-    btn.Icon:SetAlpha(0) -- invisible at runtime; canvas preview reads via GetTexture()
 
     -- Border
     Orbit.Skin:SkinBorder(btn, btn, 1, BORDER_COLOR)
@@ -266,8 +261,7 @@ function Plugin:PopulateCompartmentFlyout()
     end
 
     -- Size flyout to fit content
-    local rowWidth = COMPARTMENT_PADDING + COMPARTMENT_ICON_SIZE + COMPARTMENT_ICON_PADDING + maxTextWidth +
-    COMPARTMENT_PADDING + 10
+    local rowWidth = COMPARTMENT_PADDING + COMPARTMENT_ICON_SIZE + COMPARTMENT_ICON_PADDING + maxTextWidth + COMPARTMENT_PADDING + 10
     local width = math.min(math.max(rowWidth, 120), COMPARTMENT_MAX_WIDTH)
     local height = (#collected * COMPARTMENT_ROW_HEIGHT) + (COMPARTMENT_PADDING * 2)
     flyout:SetSize(width, height)
@@ -344,8 +338,7 @@ function Plugin:CollectAddonButtons()
                 local frameName = child:GetName()
                 local isBlizzard = false
                 if frameName then
-                    isBlizzard = BLIZZARD_MINIMAP_CHILDREN[frameName] or frameName:find("^Minimap") or
-                    frameName:find("^OrbitMinimap")
+                    isBlizzard = BLIZZARD_MINIMAP_CHILDREN[frameName] or frameName:find("^Minimap") or frameName:find("^OrbitMinimap")
                 end
                 if not isBlizzard and child:IsShown() then
                     local icon = nil
@@ -446,6 +439,9 @@ function Plugin:ApplyAddonCompartment()
 
     if not self:IsComponentDisabled("Compartment") then
         self._compartmentActive = true
+        -- Restore any previously-hooked buttons before re-collecting, so stale hooks
+        -- (e.g. on frames that are no longer eligible) are cleaned up each cycle.
+        self:RestoreCollectedButtons()
         self:CollectAddonButtons()
         self:HideCollectedButtons()
 

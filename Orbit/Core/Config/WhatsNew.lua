@@ -14,36 +14,36 @@ local WHATS_NEW_ENTRIES = {
     {
         title = "Minimap",
         body = "• New Minimap plugin — replaces Blizzard's minimap with a clean, borderless Orbit frame.\n"
-            .. "• Canvas Mode support: drag and position Zone Text, Clock, Coordinates, Calendar, Tracking, and Addon Compartment.\n"
+            .. "• Canvas Mode support: drag and position Zone Text, Clock, Coordinates, Zoom, Difficulty, Missions, Mail, Crafting Order, and Addon Compartment.\n"
+            .. "• Reparented Blizzard indicators (Instance Difficulty, Expansion Landing Page, Mail, Crafting Order) into the minimap overlay.\n"
+            .. "• Custom zoom in/out buttons with hover-reveal behaviour.\n"
             .. "• Addon Compartment collects all LibDBIcon and legacy minimap buttons into a hover-reveal drawer.\n"
+            .. "• Zone Text is now a clickable button — click to open World Map, tooltip shows zone/subzone/PvP info.\n"
             .. "• Coordinates display with real-time updates.\n"
             .. "• Optional PvP zone colouring for zone text (toggle in canvas component settings).\n"
             .. "• Canvas overrides for font, size, and colour on text components.\n"
-            .. "• Live toggle — disable/enable without a reload.\n"
+            .. "• Live toggle — disable/enable without a reload.\n",
     },
     {
         title = "Previous Updates",
         body = "• CDM Performance Parse. 50% better performance. (half the CPU+Ram)\n"
             .. "• CDM Better Left/Right anchoring against vertical stacked frames\n"
             .. "• Chaining CDM frames left and right will maintain the position of the CDM in the center now\n"
-            ..
-            "• bugfixes: Party/Raid frames names showing while mounted, combat timer bugfix, groups not updating properly if raidleader changes player position\n"
+            .. "• bugfixes: Party/Raid frames names showing while mounted, combat timer bugfix, groups not updating properly if raidleader changes player position\n"
             .. "• Added Minimap button for quick access to Edit Mode and Plugin Manager.\n"
             .. "• Mounted Visibility now uses hover-reveal on action bars and buff/debuff frames.\n"
             .. "• Plugins with live toggles now properly disable on screen without a reload.\n"
             .. "• Fixed color picker cancel applying unwanted changes.\n"
             .. "• Fixed Tip of the Spear displaying 2 cells instead of 3.\n"
             .. "• ColorPicker bugfixes. Various other minor bugfixes.\n"
-            ..
-            "• Added HealerAuras priority to how they work in Canvas Mode (this might move them around if you've already set them up)\n"
+            .. "• Added HealerAuras priority to how they work in Canvas Mode (this might move them around if you've already set them up)\n"
             .. "• Pandemic Glow fixes on debuff auras.\n"
-            .. "• Added defensive programming against conflicting addons\n"
+            .. "• Added defensive programming against conflicting addons\n",
     },
     {
         title = "Message",
-        body =
-        "Some big changes in the backend, expecting some issues to pop up. Please report via discord, github or curse page.\n\nHappy Hunting in Midnight! May the loot be forever in your favor."
-    }
+        body = "Some big changes in the backend, expecting some issues to pop up. Please report via discord, github or curse page.\n\nHappy Hunting in Midnight! May the loot be forever in your favor.",
+    },
 }
 
 local DISCORD_URL = "https://discord.gg/2sZj63kBqy"
@@ -162,7 +162,8 @@ ddEditBox:SetPoint("RIGHT", DiscordDialog, "RIGHT", -20, 0)
 ddEditBox:SetPoint("TOP", ddDesc, "BOTTOM", 0, -10)
 ddEditBox:SetAutoFocus(false)
 ddEditBox:SetScript("OnChar", function(self)
-    self:SetText(DISCORD_URL); self:HighlightText()
+    self:SetText(DISCORD_URL)
+    self:HighlightText()
 end)
 ddEditBox:SetScript("OnEscapePressed", function(self) DiscordDialog:Hide() end)
 ddEditBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
@@ -210,7 +211,9 @@ local ScrollFrame = CreateFrame("ScrollFrame", nil, Window, "ScrollFrameTemplate
 ScrollFrame:SetPoint("TOPLEFT", Window, "TOPLEFT", BG_LEFT + CONTENT_PADDING, -(BG_TOP + CONTENT_PADDING))
 ScrollFrame:SetPoint("BOTTOMRIGHT", Window, "BOTTOMRIGHT", -(BG_RIGHT + SCROLLBAR_WIDTH), FOOTER_TOTAL + CONTENT_PADDING)
 
-if ScrollFrame.ScrollBar then ScrollFrame.ScrollBar:SetAlpha(0) end
+if ScrollFrame.ScrollBar then
+    ScrollFrame.ScrollBar:SetAlpha(0)
+end
 
 local Content = CreateFrame("Frame", nil, ScrollFrame)
 ScrollFrame:SetScrollChild(Content)
@@ -221,7 +224,8 @@ local renderedFontStrings = {}
 
 local function RenderEntries()
     for _, fs in ipairs(renderedFontStrings) do
-        fs:Hide(); fs:SetText("")
+        fs:Hide()
+        fs:SetText("")
     end
     wipe(renderedFontStrings)
 
@@ -267,11 +271,15 @@ table.insert(UISpecialFrames, "OrbitWhatsNewWindow")
 Window:SetPropagateKeyboardInput(true)
 Window:SetScript("OnKeyDown", function(self, key)
     if key == "ESCAPE" then
-        if InCombatLockdown() then return end
+        if InCombatLockdown() then
+            return
+        end
         self:SetPropagateKeyboardInput(false)
         self:Hide()
         C_Timer.After(ESC_RESTORE_DELAY, function()
-            if not InCombatLockdown() then self:SetPropagateKeyboardInput(true) end
+            if not InCombatLockdown() then
+                self:SetPropagateKeyboardInput(true)
+            end
         end)
     end
 end)
@@ -280,20 +288,26 @@ end)
 
 Window:RegisterEvent("PLAYER_REGEN_DISABLED")
 Window:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_REGEN_DISABLED" and self:IsShown() then self:Hide() end
+    if event == "PLAYER_REGEN_DISABLED" and self:IsShown() then
+        self:Hide()
+    end
 end)
 
 -- [ HIDE HANDLER ]-----------------------------------------------------------------
 
 Window:SetScript("OnHide", function()
     PlaySound(SOUNDKIT.IG_MAINMENU_CLOSE)
-    if Orbit.db then Orbit.db.WhatsNewRead = Orbit.version end
+    if Orbit.db then
+        Orbit.db.WhatsNewRead = Orbit.version
+    end
 end)
 
 -- [ PUBLIC API ]-------------------------------------------------------------------
 
 function Orbit:ShowWhatsNew()
-    if InCombatLockdown() then return end
+    if InCombatLockdown() then
+        return
+    end
     Window:Show()
 end
 
@@ -304,10 +318,18 @@ trigger:RegisterEvent("PLAYER_LOGIN")
 trigger:SetScript("OnEvent", function(self)
     self:UnregisterAllEvents()
     C_Timer.After(SHOW_DELAY, function()
-        if not WHATS_NEW_ENABLED then return end
-        if InCombatLockdown() then return end
-        if not Orbit.db then return end
-        if Orbit.db.WhatsNewRead == Orbit.version then return end
+        if not WHATS_NEW_ENABLED then
+            return
+        end
+        if InCombatLockdown() then
+            return
+        end
+        if not Orbit.db then
+            return
+        end
+        if Orbit.db.WhatsNewRead == Orbit.version then
+            return
+        end
         Orbit:ShowWhatsNew()
     end)
 end)

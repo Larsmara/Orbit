@@ -103,8 +103,6 @@ function ComponentDrag:OnDragUpdate(component, parent, data, handle)
         end
     end
 
-
-
     if Engine.SmartGuides and data.guides then
         Engine.SmartGuides:Update(data.guides, snapX, snapY, parentWidth, parentHeight)
     end
@@ -304,7 +302,9 @@ end
 function ComponentDrag:MakeAuraPositionCallback(plugin, systemIndex, key)
     return function(comp, anchorX, anchorY, offsetX, offsetY, justifyH, justifyV)
         local positions = plugin:GetSetting(systemIndex, "ComponentPositions") or {}
-        if not positions[key] then positions[key] = {} end
+        if not positions[key] then
+            positions[key] = {}
+        end
         positions[key].anchorX = anchorX
         positions[key].anchorY = anchorY
         positions[key].offsetX = offsetX
@@ -315,8 +315,12 @@ function ComponentDrag:MakeAuraPositionCallback(plugin, systemIndex, key)
         if compParent then
             local cx, cy = comp:GetCenter()
             local px, py = compParent:GetCenter()
-            if cx and px then positions[key].posX = cx - px end
-            if cy and py then positions[key].posY = cy - py end
+            if cx and px then
+                positions[key].posX = cx - px
+            end
+            if cy and py then
+                positions[key].posY = cy - py
+            end
         end
         plugin:SetSetting(systemIndex, "ComponentPositions", positions)
     end
@@ -338,7 +342,7 @@ function ComponentDrag:Attach(component, parent, options)
         currentX = 0,
         currentY = 0,
         currentAlignment = "LEFT",
-        isFontString = component.GetText ~= nil,
+        isFontString = component.IsObjectType and component:IsObjectType("FontString") or false,
         isAuraContainer = options.isAuraContainer or false,
 
         guides = Engine.SmartGuides and Engine.SmartGuides:Create(parent) or nil,
