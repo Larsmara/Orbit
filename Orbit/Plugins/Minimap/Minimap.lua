@@ -249,22 +249,28 @@ function Plugin:OnLoad()
 
     -- Register all canvas components for drag
     local MPC = function(key) return OrbitEngine.ComponentDrag:MakePositionCallback(self, SYSTEM_ID, key) end
-    OrbitEngine.ComponentDrag:Attach(self.frame.ZoneText, self.frame, { key = "ZoneText", onPositionChange = MPC("ZoneText") })
+    OrbitEngine.ComponentDrag:Attach(self.frame.ZoneText, self.frame,
+        { key = "ZoneText", onPositionChange = MPC("ZoneText") })
     OrbitEngine.ComponentDrag:Attach(self.frame.Clock, self.frame, { key = "Clock", onPositionChange = MPC("Clock") })
     OrbitEngine.ComponentDrag:Attach(self.frame.Coords, self.frame, { key = "Coords", onPositionChange = MPC("Coords") })
-    OrbitEngine.ComponentDrag:Attach(self._compartmentButton, self.frame, { key = "Compartment", onPositionChange = MPC("Compartment") })
-    OrbitEngine.ComponentDrag:Attach(self.frame.ZoomContainer, self.frame, { key = "Zoom", onPositionChange = MPC("Zoom") })
+    OrbitEngine.ComponentDrag:Attach(self._compartmentButton, self.frame,
+        { key = "Compartment", onPositionChange = MPC("Compartment") })
+    OrbitEngine.ComponentDrag:Attach(self.frame.ZoomContainer, self.frame,
+        { key = "Zoom", onPositionChange = MPC("Zoom") })
     if self.frame.Difficulty then
-        OrbitEngine.ComponentDrag:Attach(self.frame.Difficulty, self.frame, { key = "Difficulty", onPositionChange = MPC("Difficulty") })
+        OrbitEngine.ComponentDrag:Attach(self.frame.Difficulty, self.frame,
+            { key = "Difficulty", onPositionChange = MPC("Difficulty") })
     end
     if self.frame.Missions then
-        OrbitEngine.ComponentDrag:Attach(self.frame.Missions, self.frame, { key = "Missions", onPositionChange = MPC("Missions") })
+        OrbitEngine.ComponentDrag:Attach(self.frame.Missions, self.frame,
+            { key = "Missions", onPositionChange = MPC("Missions") })
     end
     if self.frame.Mail then
         OrbitEngine.ComponentDrag:Attach(self.frame.Mail, self.frame, { key = "Mail", onPositionChange = MPC("Mail") })
     end
     if self.frame.CraftingOrder then
-        OrbitEngine.ComponentDrag:Attach(self.frame.CraftingOrder, self.frame, { key = "CraftingOrder", onPositionChange = MPC("CraftingOrder") })
+        OrbitEngine.ComponentDrag:Attach(self.frame.CraftingOrder, self.frame,
+            { key = "CraftingOrder", onPositionChange = MPC("CraftingOrder") })
     end
 
     -- Register with edit mode
@@ -550,7 +556,8 @@ function Plugin:ReparentBlizzardComponents()
     end
 
     -- Crafting Order indicator
-    local craftingOrder = MinimapCluster and MinimapCluster.IndicatorFrame and MinimapCluster.IndicatorFrame.CraftingOrderFrame
+    local craftingOrder = MinimapCluster and MinimapCluster.IndicatorFrame and
+    MinimapCluster.IndicatorFrame.CraftingOrderFrame
     if craftingOrder then
         self._origCraftingOrderParent = craftingOrder:GetParent()
         craftingOrder:SetParent(overlay)
@@ -627,7 +634,8 @@ function Plugin:CaptureBlizzardMinimap()
 
     -- Protect against Blizzard trying to re-steal the minimap
     OrbitEngine.FrameGuard:Protect(minimap, self.frame)
-    OrbitEngine.FrameGuard:UpdateProtection(minimap, self.frame, function() self:ApplySettings() end, { enforceShow = true })
+    OrbitEngine.FrameGuard:UpdateProtection(minimap, self.frame, function() self:ApplySettings() end,
+        { enforceShow = true })
 
     -- Hook SetPoint to prevent Blizzard from repositioning
     if not minimap._orbitSetPointHooked then
@@ -772,6 +780,13 @@ function Plugin:ApplySettings()
     if frame.ZoomContainer then
         if not self:IsComponentDisabled("Zoom") then
             frame.ZoomContainer:Show()
+            local zoomOverrides = (savedPositions.Zoom or {}).overrides
+            if zoomOverrides and zoomOverrides.IconSize then
+                local baseW = ZOOM_BUTTON_SIZE
+                frame.ZoomContainer:SetScale(zoomOverrides.IconSize / baseW)
+            else
+                frame.ZoomContainer:SetScale(1)
+            end
             self:UpdateZoomState()
         else
             frame.ZoomContainer:Hide()
@@ -782,6 +797,13 @@ function Plugin:ApplySettings()
     if frame.Difficulty then
         if not self:IsComponentDisabled("Difficulty") then
             frame.Difficulty:Show()
+            local diffOverrides = (savedPositions.Difficulty or {}).overrides
+            if diffOverrides and diffOverrides.IconSize then
+                local baseW = frame.Difficulty:GetWidth()
+                if baseW and baseW > 0 then frame.Difficulty:SetScale(diffOverrides.IconSize / baseW) end
+            else
+                frame.Difficulty:SetScale(1)
+            end
         else
             frame.Difficulty:Hide()
         end
@@ -792,6 +814,13 @@ function Plugin:ApplySettings()
         if not self:IsComponentDisabled("Missions") then
             -- Don't force-show; the button has its own visibility logic (hidden when no active expansion feature)
             frame.Missions:SetScript("OnShow", nil)
+            local missionsOverrides = (savedPositions.Missions or {}).overrides
+            if missionsOverrides and missionsOverrides.IconSize then
+                local baseSize = 36 -- default size set during reparenting
+                frame.Missions:SetScale(missionsOverrides.IconSize / baseSize)
+            else
+                frame.Missions:SetScale(1)
+            end
         else
             frame.Missions:Hide()
             frame.Missions:SetScript("OnShow", function(f) f:Hide() end)
@@ -802,6 +831,13 @@ function Plugin:ApplySettings()
     if frame.Mail then
         if not self:IsComponentDisabled("Mail") then
             frame.Mail:SetScript("OnShow", nil)
+            local mailOverrides = (savedPositions.Mail or {}).overrides
+            if mailOverrides and mailOverrides.IconSize then
+                local baseW = frame.Mail:GetWidth()
+                if baseW and baseW > 0 then frame.Mail:SetScale(mailOverrides.IconSize / baseW) end
+            else
+                frame.Mail:SetScale(1)
+            end
         else
             frame.Mail:Hide()
             frame.Mail:SetScript("OnShow", function(f) f:Hide() end)
@@ -812,6 +848,13 @@ function Plugin:ApplySettings()
     if frame.CraftingOrder then
         if not self:IsComponentDisabled("CraftingOrder") then
             frame.CraftingOrder:SetScript("OnShow", nil)
+            local craftOverrides = (savedPositions.CraftingOrder or {}).overrides
+            if craftOverrides and craftOverrides.IconSize then
+                local baseW = frame.CraftingOrder:GetWidth()
+                if baseW and baseW > 0 then frame.CraftingOrder:SetScale(craftOverrides.IconSize / baseW) end
+            else
+                frame.CraftingOrder:SetScale(1)
+            end
         else
             frame.CraftingOrder:Hide()
             frame.CraftingOrder:SetScript("OnShow", function(f) f:Hide() end)
