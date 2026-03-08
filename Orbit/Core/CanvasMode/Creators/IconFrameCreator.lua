@@ -40,6 +40,7 @@ local function Create(container, preview, key, source, data)
         zoomOutTex:SetAtlas("ui-hud-minimap-zoom-out", false)
 
         visual = container
+        container.isIconFrame = true
         return visual
     end
 

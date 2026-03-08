@@ -369,7 +369,8 @@ function Settings:Open(componentKey, container, plugin, systemIndex)
         elseif key == "CustomColorValue" and visual.GetTextColor then
             local r, g, b, a = visual:GetTextColor()
             return { r = r, g = g, b = b, a = a or 1 }
-        elseif key == "Scale" then return 1.0 end
+        elseif key == "Scale" then return 1.0
+        elseif key == "IconSize" then return cont:GetWidth() and math.floor(cont:GetWidth() + 0.5) end
         return nil
     end
 
