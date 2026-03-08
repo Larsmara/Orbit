@@ -40,6 +40,7 @@ local DEFAULT_SIZE = 200
 local CLOCK_UPDATE_INTERVAL = 1
 local COORDS_UPDATE_INTERVAL = 0.1
 local ZOOM_BUTTON_SIZE = 20
+local MISSIONS_BASE_SIZE = 36
 local ZOOM_FADE_IN = 0.15
 local ZOOM_FADE_OUT = 0.3
 
@@ -527,7 +528,7 @@ function Plugin:ReparentBlizzardComponents()
         missions:SetParent(overlay)
         missions:ClearAllPoints()
         missions:SetPoint("CENTER", self.frame, "BOTTOMLEFT", 20, 20)
-        missions:SetSize(36, 36) -- slightly smaller than default 53×53 to fit minimap
+        missions:SetSize(MISSIONS_BASE_SIZE, MISSIONS_BASE_SIZE) -- slightly smaller than default 53×53 to fit minimap
         -- Hidden icon for canvas mode dock preview (texture left empty; atlas resolved via IconPreviewAtlases)
         if not missions.Icon then
             missions.Icon = missions:CreateTexture(nil, "ARTWORK")
@@ -685,6 +686,12 @@ end
 
 -- [ APPLY SETTINGS ]--------------------------------------------------------------------------------
 
+local function ApplyIconScale(frame, overrides, baseW)
+    if not frame then return end
+    local size = overrides and overrides.IconSize
+    frame:SetScale((size and baseW and baseW > 0) and (size / baseW) or 1)
+end
+
 function Plugin:ApplySettings()
     local frame = self.frame
     if not frame then
@@ -780,13 +787,7 @@ function Plugin:ApplySettings()
     if frame.ZoomContainer then
         if not self:IsComponentDisabled("Zoom") then
             frame.ZoomContainer:Show()
-            local zoomOverrides = (savedPositions.Zoom or {}).overrides
-            if zoomOverrides and zoomOverrides.IconSize then
-                local baseW = ZOOM_BUTTON_SIZE
-                frame.ZoomContainer:SetScale(zoomOverrides.IconSize / baseW)
-            else
-                frame.ZoomContainer:SetScale(1)
-            end
+            ApplyIconScale(frame.ZoomContainer, (savedPositions.Zoom or {}).overrides, ZOOM_BUTTON_SIZE)
             self:UpdateZoomState()
         else
             frame.ZoomContainer:Hide()
@@ -797,13 +798,7 @@ function Plugin:ApplySettings()
     if frame.Difficulty then
         if not self:IsComponentDisabled("Difficulty") then
             frame.Difficulty:Show()
-            local diffOverrides = (savedPositions.Difficulty or {}).overrides
-            if diffOverrides and diffOverrides.IconSize then
-                local baseW = frame.Difficulty:GetWidth()
-                if baseW and baseW > 0 then frame.Difficulty:SetScale(diffOverrides.IconSize / baseW) end
-            else
-                frame.Difficulty:SetScale(1)
-            end
+            ApplyIconScale(frame.Difficulty, (savedPositions.Difficulty or {}).overrides, frame.Difficulty:GetWidth())
         else
             frame.Difficulty:Hide()
         end
@@ -814,13 +809,7 @@ function Plugin:ApplySettings()
         if not self:IsComponentDisabled("Missions") then
             -- Don't force-show; the button has its own visibility logic (hidden when no active expansion feature)
             frame.Missions:SetScript("OnShow", nil)
-            local missionsOverrides = (savedPositions.Missions or {}).overrides
-            if missionsOverrides and missionsOverrides.IconSize then
-                local baseSize = 36 -- default size set during reparenting
-                frame.Missions:SetScale(missionsOverrides.IconSize / baseSize)
-            else
-                frame.Missions:SetScale(1)
-            end
+            ApplyIconScale(frame.Missions, (savedPositions.Missions or {}).overrides, MISSIONS_BASE_SIZE)
         else
             frame.Missions:Hide()
             frame.Missions:SetScript("OnShow", function(f) f:Hide() end)
@@ -831,13 +820,7 @@ function Plugin:ApplySettings()
     if frame.Mail then
         if not self:IsComponentDisabled("Mail") then
             frame.Mail:SetScript("OnShow", nil)
-            local mailOverrides = (savedPositions.Mail or {}).overrides
-            if mailOverrides and mailOverrides.IconSize then
-                local baseW = frame.Mail:GetWidth()
-                if baseW and baseW > 0 then frame.Mail:SetScale(mailOverrides.IconSize / baseW) end
-            else
-                frame.Mail:SetScale(1)
-            end
+            ApplyIconScale(frame.Mail, (savedPositions.Mail or {}).overrides, frame.Mail:GetWidth())
         else
             frame.Mail:Hide()
             frame.Mail:SetScript("OnShow", function(f) f:Hide() end)
@@ -848,13 +831,7 @@ function Plugin:ApplySettings()
     if frame.CraftingOrder then
         if not self:IsComponentDisabled("CraftingOrder") then
             frame.CraftingOrder:SetScript("OnShow", nil)
-            local craftOverrides = (savedPositions.CraftingOrder or {}).overrides
-            if craftOverrides and craftOverrides.IconSize then
-                local baseW = frame.CraftingOrder:GetWidth()
-                if baseW and baseW > 0 then frame.CraftingOrder:SetScale(craftOverrides.IconSize / baseW) end
-            else
-                frame.CraftingOrder:SetScale(1)
-            end
+            ApplyIconScale(frame.CraftingOrder, (savedPositions.CraftingOrder or {}).overrides, frame.CraftingOrder:GetWidth())
         else
             frame.CraftingOrder:Hide()
             frame.CraftingOrder:SetScript("OnShow", function(f) f:Hide() end)

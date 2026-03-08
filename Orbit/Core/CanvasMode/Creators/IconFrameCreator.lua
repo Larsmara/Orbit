@@ -7,6 +7,8 @@ local CanvasMode = OrbitEngine.CanvasMode
 local CC = CanvasMode.CreatorConstants
 local GetSourceSize = CanvasMode.GetSourceSize
 
+local ZOOM_BUTTON_GAP = 2
+
 -- [ CREATOR ]---------------------------------------------------------------------------------------
 
 local function Create(container, preview, key, source, data)
@@ -20,28 +22,23 @@ local function Create(container, preview, key, source, data)
         local savedSize = overrides and overrides.IconSize
         local w, h = GetSourceSize(source, CC.DEFAULT_ICON_SIZE, CC.DEFAULT_ICON_SIZE)
         if savedSize and savedSize > 0 then
-            local aspect = h / math.max(w, 1)
+            h = savedSize * (h / math.max(w, 1))
             w = savedSize
-            h = savedSize * aspect
         end
         container:SetSize(w, h)
 
-        local btnSize = w
-        local gap = 2
-
         local zoomInTex = container:CreateTexture(nil, "ARTWORK")
-        zoomInTex:SetSize(btnSize, btnSize)
+        zoomInTex:SetSize(w, w)
         zoomInTex:SetPoint("TOP", container, "TOP", 0, 0)
         zoomInTex:SetAtlas("ui-hud-minimap-zoom-in", false)
 
         local zoomOutTex = container:CreateTexture(nil, "ARTWORK")
-        zoomOutTex:SetSize(btnSize, btnSize)
-        zoomOutTex:SetPoint("TOP", zoomInTex, "BOTTOM", 0, -gap)
+        zoomOutTex:SetSize(w, w)
+        zoomOutTex:SetPoint("TOP", zoomInTex, "BOTTOM", 0, -ZOOM_BUTTON_GAP)
         zoomOutTex:SetAtlas("ui-hud-minimap-zoom-out", false)
 
-        visual = container
         container.isIconFrame = true
-        return visual
+        return container
     end
 
     if hasFlipbook then
