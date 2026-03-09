@@ -27,12 +27,32 @@ local WHATS_NEW_ENTRIES = {
             .. "• Live toggle — disable/enable without a reload.\n",
     },
     {
-        title = "Note",
-        body =
-        "Made some updates to the anchoring logic inside Canvas mode, you may need to update some positions for your components"
+        title = "New Features",
+        body = "• CDM Buff Bars: Added to Orbit with Canvas Mode support and coloring\n"
+            .. "• Action Bars: out-of-range, out-of-mana, and unusable spell coloring with customizable colors\n"
+            .. "• Action Bars: icon desaturation on cooldown\n"
+            .. "• Action Bars: cooldown swipe color setting\n"
+            .. "• Cooldown Manager: separate Active Swipe and Cooldown Swipe color settings\n"
+            .. "• Right-click to cancel player buffs on player buffs frame\n"
+            .. "• Color Picker: desaturation checkbox for textures that support it\n"
     },
     {
-        title = "Update",
+        title = "Bugfixes",
+        body = "• Fixed taint errors when hiding native Blizzard frames (no more blocked actions in delves/boss deaths)\n"
+            .. "• Fixed snap alignment using wrong reference point for chain-anchored frames\n"
+            .. "• Buff/Debuff frames now refresh correctly after leaving combat\n"
+            .. "• Frames no longer jump when dragging chain-anchored frames\n"
+            .. "• Queue Status no longer errors during combat\n"
+            .. "• Pet Frame now refreshes properly on pet changes\n"
+            .. "• Vehicle Exit Settings Fixes\n"
+            .. "• Various other minor bugfixes\n"
+    },
+    {
+        title = "Note",
+        body = "Made some updates to the anchoring logic inside Canvas mode, you may need to update some positions for your components"
+    },
+    {
+        title = "Previous Updates",
         body = "• Canvas Mode overhaul: new layout, dock, and component settings\n"
             .. "• Improved drag and drop experience in Canvas Mode\n"
             .. "• Grouped Status Icons & Animated\n"
@@ -41,16 +61,6 @@ local WHATS_NEW_ENTRIES = {
             .. "• Animated Party/Raid/Boss Preview Frames (click eyeball in settings)\n"
             .. "• PVP Icon on Player Frame\n"
             .. "• Role Icon: Hide DPS Role option in Canvas Mode\n"
-    },
-    {
-        title = "Bugfixes",
-        body = "• Frames no longer jump when dragging chain-anchored frames\n"
-            .. "• Queue Status no longer errors during combat\n"
-            .. "• Pet Frame now refreshes properly on pet changes\n"
-            .. "• Player Resources should only show whole numbers, not decimals for classes that dont require them\n"
-            .. "• Castbar visibility issues hopefully resolved (let me know)\n"
-            .. "• Vehicle Exit Settings Fixes\n"
-            .. "• Various other minor bugfixes\n"
     },
 }
 

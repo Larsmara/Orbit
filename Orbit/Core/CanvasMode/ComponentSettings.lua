@@ -110,6 +110,8 @@ local KEY_SCHEMAS = {
     Charges          = Compose(STATIC_TEXT),
     ChargeCount      = Compose(STATIC_TEXT),
     Text             = Compose(STATIC_TEXT),
+    BuffBarName      = Compose(STATIC_TEXT),
+    BuffBarTimer     = Compose(STATIC_TEXT),
     ["CastBar.Text"] = Compose(STATIC_TEXT),
     LevelText        = Compose(TEXT_NO_COLOR),
     StatusIcons      = { controls = { ICON_SIZE_CONTROL } },
@@ -274,6 +276,8 @@ local COMPONENT_TITLES = {
     Missions = "Missions",
     Mail = "New Mail",
     CraftingOrder = "Crafting Order",
+    BuffBarName = "Buff Bar Name",
+    BuffBarTimer = "Buff Bar Timer",
 }
 
 -- Resolve display title dynamically (healer aura slots aren't active at load time)
