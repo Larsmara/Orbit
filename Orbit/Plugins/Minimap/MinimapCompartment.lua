@@ -8,7 +8,7 @@ local Plugin = Orbit:GetPlugin(SYSTEM_ID)
 
 -- [ CONSTANTS ]-------------------------------------------------------------------------------------
 
-local BORDER_COLOR = { r = 0, g = 0, b = 0, a = 1 }
+local BORDER_COLOR = Orbit.MinimapConstants.BORDER_COLOR
 local COMPARTMENT_BUTTON_SIZE = 24
 local COMPARTMENT_ICON_SIZE = 20
 local COMPARTMENT_ROW_HEIGHT = 22
@@ -166,6 +166,7 @@ function Plugin:PopulateCompartmentFlyout()
         if not row then
             row = CreateFrame("Button", nil, flyout)
             row:SetHeight(COMPARTMENT_ROW_HEIGHT)
+            row:RegisterForClicks("AnyUp")
             row:SetHighlightTexture(COMPARTMENT_HIGHLIGHT_TEXTURE, "ADD")
             row:GetHighlightTexture():SetAlpha(0.15)
 
@@ -205,17 +206,23 @@ function Plugin:PopulateCompartmentFlyout()
         end
 
         -- Click handler: trigger the original addon button's OnClick
+        -- RegisterForClicks("AnyUp") is set on row creation so right-clicks are received.
         row:SetScript("OnClick", function(_, button)
             if not entry.button then
                 return
             end
             local btn = entry.button
+            local b = button or "LeftButton"
             if btn.dataObject and btn.dataObject.OnClick then
-                btn.dataObject.OnClick(btn, button or "LeftButton")
+                btn.dataObject.OnClick(btn, b)
             elseif btn:GetScript("OnClick") then
-                btn:GetScript("OnClick")(btn, button or "LeftButton")
+                btn:GetScript("OnClick")(btn, b)
             end
-            flyout:Hide()
+            -- Close flyout on left-click; leave open on right-click so context
+            -- menus (which open over the flyout) can appear without losing context.
+            if b ~= "RightButton" then
+                flyout:Hide()
+            end
         end)
 
         -- Tooltip passthrough
@@ -261,7 +268,8 @@ function Plugin:PopulateCompartmentFlyout()
     end
 
     -- Size flyout to fit content
-    local rowWidth = COMPARTMENT_PADDING + COMPARTMENT_ICON_SIZE + COMPARTMENT_ICON_PADDING + maxTextWidth + COMPARTMENT_PADDING + 10
+    local rowWidth = COMPARTMENT_PADDING + COMPARTMENT_ICON_SIZE + COMPARTMENT_ICON_PADDING + maxTextWidth +
+    COMPARTMENT_PADDING + 10
     local width = math.min(math.max(rowWidth, 120), COMPARTMENT_MAX_WIDTH)
     local height = (#collected * COMPARTMENT_ROW_HEIGHT) + (COMPARTMENT_PADDING * 2)
     flyout:SetSize(width, height)
@@ -338,7 +346,8 @@ function Plugin:CollectAddonButtons()
                 local frameName = child:GetName()
                 local isBlizzard = false
                 if frameName then
-                    isBlizzard = BLIZZARD_MINIMAP_CHILDREN[frameName] or frameName:find("^Minimap") or frameName:find("^OrbitMinimap")
+                    isBlizzard = BLIZZARD_MINIMAP_CHILDREN[frameName] or frameName:find("^Minimap") or
+                    frameName:find("^OrbitMinimap")
                 end
                 if not isBlizzard and child:IsShown() then
                     local icon = nil
@@ -378,30 +387,24 @@ function Plugin:HideCollectedButtons()
     for _, entry in ipairs(self._collectedButtons) do
         if entry.button then
             entry.button:Hide()
-            -- Prevent re-showing by addons that call Show() periodically
+            -- Prevent re-showing by addons that call Show() periodically.
+            -- hooksecurefunc is taint-safe; the hook fires after the original Show().
+            -- We hide immediately afterwards when the compartment is active.
             if not entry.button._orbitOnShowHooked then
-                entry.button._orbitOrigShow = entry.button.Show
-                entry.button.Show = function(b)
+                hooksecurefunc(entry.button, "Show", function(b)
                     if self._compartmentActive then
-                        return
+                        b:Hide()
                     end
-                    if b._orbitOrigShow then
-                        b:_orbitOrigShow()
-                    end
-                end
+                end)
                 entry.button._orbitOnShowHooked = true
             end
             -- For direct minimap children, also suppress SetShown
             if entry.source == "minimap_child" and not entry.button._orbitSetShownHooked then
-                entry.button._orbitOrigSetShown = entry.button.SetShown
-                entry.button.SetShown = function(b, shown)
+                hooksecurefunc(entry.button, "SetShown", function(b, shown)
                     if shown and self._compartmentActive then
-                        return
+                        b:Hide()
                     end
-                    if b._orbitOrigSetShown then
-                        b:_orbitOrigSetShown(shown)
-                    end
-                end
+                end)
                 entry.button._orbitSetShownHooked = true
             end
         end
@@ -414,16 +417,10 @@ function Plugin:RestoreCollectedButtons()
     end
     for _, entry in ipairs(self._collectedButtons) do
         if entry.button then
-            if entry.button._orbitOrigShow then
-                entry.button.Show = entry.button._orbitOrigShow
-                entry.button._orbitOrigShow = nil
-                entry.button._orbitOnShowHooked = nil
-            end
-            if entry.button._orbitOrigSetShown then
-                entry.button.SetShown = entry.button._orbitOrigSetShown
-                entry.button._orbitOrigSetShown = nil
-                entry.button._orbitSetShownHooked = nil
-            end
+            -- Hooks installed via hooksecurefunc cannot be removed; just clear the
+            -- flag so the hook body becomes a no-op after the compartment is inactive.
+            entry.button._orbitOnShowHooked = nil
+            entry.button._orbitSetShownHooked = nil
             if not (entry.button.db and entry.button.db.hide) then
                 entry.button:Show()
             end

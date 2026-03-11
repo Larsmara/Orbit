@@ -1,17 +1,22 @@
 ---@type Orbit
-local Orbit = Orbit
-local OrbitEngine = Orbit.Engine
-local LSM = LibStub("LibSharedMedia-3.0")
+local Orbit              = Orbit
+local OrbitEngine        = Orbit.Engine
+local LSM                = LibStub("LibSharedMedia-3.0")
 
 -- [ PLUGIN REGISTRATION ]---------------------------------------------------------------------------
-local SYSTEM_ID = "Orbit_Minimap"
+local SYSTEM_ID          = "Orbit_Minimap"
 
-local Plugin = Orbit:RegisterPlugin("Minimap", SYSTEM_ID, {
+local Plugin             = Orbit:RegisterPlugin("Minimap", SYSTEM_ID, {
     liveToggle = true,
     canvasMode = true,
     defaults = {
         Opacity = 100,
         Size = 200,
+        Shape = "square",
+        BorderColor = { r = 0, g = 0, b = 0, a = 1 },
+        RotateMinimap = false,
+        MiddleClickAction = "none",
+        AutoZoomOutDelay = 5,
         ZoneTextSize = 12,
         ZoneTextColoring = false,
         DisabledComponents = {},
@@ -30,111 +35,26 @@ local Plugin = Orbit:RegisterPlugin("Minimap", SYSTEM_ID, {
 })
 
 -- [ CONSTANTS ]-------------------------------------------------------------------------------------
+-- All values sourced from MinimapConstants.lua via Orbit.MinimapConstants.
 
-local BORDER_COLOR = { r = 0, g = 0, b = 0, a = 1 }
-local DEFAULT_SIZE = 200
-local CLOCK_UPDATE_INTERVAL = 1
-local COORDS_UPDATE_INTERVAL = 0.1
-local ZOOM_BUTTON_W = 17
-local ZOOM_BUTTON_IN_H = 17
-local ZOOM_BUTTON_OUT_H = 9
-local MISSIONS_BASE_SIZE = 36
-local ZOOM_FADE_IN = 0.15
-local ZOOM_FADE_OUT = 0.3
-
--- [ BLIZZARD FRAME REFERENCES ]---------------------------------------------------------------------
-
-local function GetBlizzardMinimap() return Minimap end
-
-local function GetBlizzardCluster() return MinimapCluster end
-
--- [ BLIZZARD ART STRIPPING ]------------------------------------------------------------------------
-
-local function StripBlizzardArt()
-    local cluster = GetBlizzardCluster()
-    if not cluster then
-        return
-    end
-
-    -- Hide the entire cluster frame (takes BorderTop, ZoneTextButton, Tracking, IndicatorFrame, InstanceDifficulty with it)
-    OrbitEngine.NativeFrame:Hide(cluster, { unregisterEvents = false, clearScripts = false })
-
-    -- Hide the compass frame / backdrop art that surrounds the minimap render
-    if MinimapBackdrop then
-        MinimapBackdrop:SetAlpha(0)
-    end
-    if MinimapCompassTexture then
-        MinimapCompassTexture:Hide()
-    end
-
-    -- Suppress Blizzard's edit mode selection on the minimap cluster
-    if cluster.Selection then
-        cluster.Selection:SetAlpha(0)
-        cluster.Selection:EnableMouse(false)
-    end
-
-    -- Hide Blizzard's native zoom buttons and hover area (we provide our own)
-    local minimap = Minimap
-    if minimap then
-        if minimap.ZoomIn then
-            minimap.ZoomIn:Hide()
-            minimap.ZoomIn:SetScript("OnShow", minimap.ZoomIn.Hide)
-        end
-        if minimap.ZoomOut then
-            minimap.ZoomOut:Hide()
-            minimap.ZoomOut:SetScript("OnShow", minimap.ZoomOut.Hide)
-        end
-        if minimap.ZoomHitArea then
-            minimap.ZoomHitArea:Hide()
-            minimap.ZoomHitArea:EnableMouse(false)
-        end
-    end
-end
-
--- [ ZONE TEXT UPDATER ]-----------------------------------------------------------------------------
-
-local ZONE_PVP_COLORS = {
-    sanctuary = { r = 0.41, g = 0.80, b = 0.94 },
-    friendly = { r = 0.10, g = 1.00, b = 0.10 },
-    hostile = { r = 1.00, g = 0.10, b = 0.10 },
-    contested = { r = 1.00, g = 0.70, b = 0.00 },
-}
-
-local function UpdateZoneText(button, coloring, overrides)
-    local fontString = button.Text or button
-    fontString:SetText(GetMinimapZoneText())
-    if coloring then
-        local pvpType = GetZonePVPInfo()
-        local color = ZONE_PVP_COLORS[pvpType]
-        if color then
-            fontString:SetTextColor(color.r, color.g, color.b, 1)
-        else
-            fontString:SetTextColor(1, 1, 1, 1)
-        end
-    elseif overrides and next(overrides) then
-        OrbitEngine.OverrideUtils.ApplyTextColor(fontString, overrides)
-    else
-        fontString:SetTextColor(1, 1, 1, 1)
-    end
-    -- Resize the button to match text extents so tooltip/click area is accurate
-    if button.Text then
-        button:SetSize(fontString:GetStringWidth() + 2, fontString:GetStringHeight() + 2)
-    end
-end
+local C                  = Orbit.MinimapConstants
+local DEFAULT_SIZE       = C.DEFAULT_SIZE
+local BORDER_COLOR       = C.BORDER_COLOR
+local ZOOM_BUTTON_W      = C.ZOOM_BUTTON_W
+local MISSIONS_BASE_SIZE = C.MISSIONS_BASE_SIZE
+local BORDER_RING_ATLAS  = C.BORDER_RING_ATLAS
 
 -- [ LIFECYCLE ]-------------------------------------------------------------------------------------
 
 function Plugin:OnLoad()
-    -- Register canvas mode preview atlases for minimap components
-    Orbit.IconPreviewAtlases = Orbit.IconPreviewAtlases or {}
-    Orbit.IconPreviewAtlases.Zoom = "common-icon-zoomin"
-    Orbit.IconPreviewAtlases.Difficulty = "UI-HUD-UnitFrame-Player-PVP-FFAIcon"
-    -- Missions uses CyclingAtlas creator; no static fallback needed
-    Orbit.IconPreviewAtlases.Mail = "ui-hud-minimap-mail-up"
+    Orbit.IconPreviewAtlases               = Orbit.IconPreviewAtlases or {}
+    Orbit.IconPreviewAtlases.Zoom          = "common-icon-zoomin"
+    Orbit.IconPreviewAtlases.Difficulty    = "UI-HUD-UnitFrame-Player-PVP-FFAIcon"
+    Orbit.IconPreviewAtlases.Mail          = "ui-hud-minimap-mail-up"
     Orbit.IconPreviewAtlases.CraftingOrder = "UI-HUD-Minimap-CraftingOrder-Up"
 
     -- Create orbit container
-    self.frame = CreateFrame("Frame", "OrbitMinimapContainer", UIParent)
+    self.frame                             = CreateFrame("Frame", "OrbitMinimapContainer", UIParent)
     self.frame:SetSize(DEFAULT_SIZE, DEFAULT_SIZE)
     self.frame:SetClampedToScreen(true)
     self.frame.systemIndex = SYSTEM_ID
@@ -155,6 +75,13 @@ function Plugin:OnLoad()
     self.frame.bg = self.frame:CreateTexture(nil, "BACKGROUND")
     self.frame.bg:SetAllPoints(self.frame)
     self.frame.bg:SetColorTexture(0, 0, 0, 1)
+
+    -- Round border ring (visible only when Shape = "round").
+    -- Drawn on the OVERLAY layer so it sits above the minimap render surface.
+    self.frame.RoundBorder = self.frame:CreateTexture(nil, "OVERLAY", nil, 7)
+    self.frame.RoundBorder:SetAtlas(BORDER_RING_ATLAS, true)
+    self.frame.RoundBorder:SetAllPoints(self.frame)
+    self.frame.RoundBorder:Hide()
 
     -- Overlay for canvas components (sits above the minimap render but below DIALOG strata)
     self.frame.Overlay = CreateFrame("Frame", nil, self.frame)
@@ -185,7 +112,7 @@ function Plugin:OnLoad()
         end
         local pvpType, _, factionName = GetZonePVPInfo()
         if pvpType and pvpType ~= "" then
-            local color = ZONE_PVP_COLORS[pvpType] or { r = 1, g = 1, b = 1 }
+            local color = self.ZonePVPColors and self.ZonePVPColors[pvpType] or { r = 1, g = 1, b = 1 }
             local label = pvpType:sub(1, 1):upper() .. pvpType:sub(2)
             if factionName and factionName ~= "" then
                 GameTooltip:AddLine(label .. " (" .. factionName .. ")", color.r, color.g, color.b)
@@ -265,7 +192,7 @@ function Plugin:OnLoad()
         onPositionChange = MPC("Coords"),
     })
     OrbitEngine.ComponentDrag:Attach(self._compartmentButton, self.frame,
-        { key = "Compartment", sourceOverride = self._compartmentButton.icon, onPositionChange = MPC("Compartment") })
+        { key = "Compartment", onPositionChange = MPC("Compartment") })
     OrbitEngine.ComponentDrag:Attach(self.frame.ZoomContainer, self.frame,
         { key = "Zoom", onPositionChange = MPC("Zoom") })
     if self.frame.Difficulty then
@@ -295,417 +222,53 @@ function Plugin:OnLoad()
     local function OnZoneChanged()
         local positions = self:GetSetting(SYSTEM_ID, "ComponentPositions") or {}
         local zoneOverrides = (positions.ZoneText or {}).overrides or {}
-        UpdateZoneText(self.frame.ZoneText, self:GetSetting(SYSTEM_ID, "ZoneTextColoring"), zoneOverrides)
+        self:UpdateZoneText(self.frame.ZoneText, self:GetSetting(SYSTEM_ID, "ZoneTextColoring"), zoneOverrides)
     end
     Orbit.EventBus:On("ZONE_CHANGED", OnZoneChanged, self)
     Orbit.EventBus:On("ZONE_CHANGED_INDOORS", OnZoneChanged, self)
     Orbit.EventBus:On("ZONE_CHANGED_NEW_AREA", OnZoneChanged, self)
 
-    -- Reparent Blizzard's minimap into our container
-    self:CaptureBlizzardMinimap()
+    -- Canvas preview: clip to a circle when Shape = "round"
+    self.frame.CreateCanvasPreview = function(frame, options)
+        options = options or {}
+        local parent = options.parent or UIParent
+        local w = frame:GetWidth()
+        local h = frame:GetHeight()
+        local shape = self:GetSetting(SYSTEM_ID, "Shape") or "square"
+        local borderSize = Orbit.db.GlobalSettings.BorderSize or 2
+        local bgColor = { r = 0.05, g = 0.05, b = 0.05, a = 1 }
 
-    -- Check for pending calendar invites at login
+        local preview = CreateFrame("Frame", nil, parent)
+        preview:SetFrameLevel(parent:GetFrameLevel() + 5)
+        preview:SetSize(w, h)
+        preview:SetPoint("CENTER", parent, "CENTER", 0, 0)
+        preview.sourceFrame  = frame
+        preview.sourceWidth  = w
+        preview.sourceHeight = h
+        preview.previewScale = 1
+        preview.components   = {}
+
+        -- Dark bg texture — always visible as a square baseline
+        preview.bg = preview:CreateTexture(nil, "BACKGROUND", nil, 1)
+        preview.bg:SetAllPoints()
+        preview.bg:SetColorTexture(bgColor.r, bgColor.g, bgColor.b, bgColor.a)
+
+        if shape == "round" then
+            -- Clip bg to circle
+            local bgMask = preview:CreateMaskTexture(nil, "BACKGROUND", nil, 0)
+            bgMask:SetTexture(MASK_ROUND, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+            bgMask:SetAllPoints(preview.bg)
+            preview.bg:AddMaskTexture(bgMask)
+        else
+            Orbit.Skin:SkinBorder(preview, preview, borderSize, { r = 1, g = 1, b = 1, a = 1 })
+        end
+
+        return preview
+    end
+
+    self:CaptureBlizzardMinimap()
     self:UpdateCalendarInvites()
 end
-
--- [ CLOCK UPDATER ]---------------------------------------------------------------------------------
-
-function Plugin:UpdateClock()
-    if not self.frame or not self.frame.Clock then
-        return
-    end
-    local text = self.frame.Clock.Text
-    if GetCVarBool("timeMgrUseLocalTime") then
-        text:SetText(GameTime_GetLocalTime(GetCVarBool("timeMgrUseMilitaryTime")))
-    else
-        text:SetText(GameTime_GetGameTime(GetCVarBool("timeMgrUseMilitaryTime")))
-    end
-    -- Resize button to match text extents so tooltip/click area is accurate
-    self.frame.Clock:SetSize(text:GetStringWidth() + 2, text:GetStringHeight() + 2)
-end
-
-function Plugin:StartClockTicker()
-    if self._clockTicker then
-        return
-    end
-    self._clockTicker = C_Timer.NewTicker(CLOCK_UPDATE_INTERVAL, function() self:UpdateClock() end)
-end
-
-function Plugin:StopClockTicker()
-    if self._clockTicker then
-        self._clockTicker:Cancel()
-        self._clockTicker = nil
-    end
-end
-
--- [ COORDS UPDATER ]--------------------------------------------------------------------------------
-
-function Plugin:UpdateCoords()
-    if not self.frame or not self.frame.Coords then
-        return
-    end
-    local fs = self.frame.Coords.Text or self.frame.Coords
-    local map = C_Map.GetBestMapForUnit("player")
-    if not map then
-        fs:SetText("")
-        return
-    end
-    local pos = C_Map.GetPlayerMapPosition(map, "player")
-    if not pos then
-        fs:SetText("")
-        return
-    end
-    local x, y = pos:GetXY()
-    fs:SetFormattedText("%.1f, %.1f", x * 100, y * 100)
-    -- Resize wrapper to text extents
-    self.frame.Coords:SetSize(fs:GetStringWidth() + 2, fs:GetStringHeight() + 2)
-end
-
-function Plugin:StartCoordsTicker()
-    if self._coordsTicker then
-        return
-    end
-    self._coordsTicker = C_Timer.NewTicker(COORDS_UPDATE_INTERVAL, function() self:UpdateCoords() end)
-end
-
-function Plugin:StopCoordsTicker()
-    if self._coordsTicker then
-        self._coordsTicker:Cancel()
-        self._coordsTicker = nil
-    end
-end
-
--- [ ZOOM BUTTONS ]----------------------------------------------------------------------------------
-
-function Plugin:UpdateZoomState()
-    local container = self.frame and self.frame.ZoomContainer
-    if not container then
-        return
-    end
-    local minimap = GetBlizzardMinimap()
-    if not minimap then
-        return
-    end
-    local zoom = minimap:GetZoom()
-    local maxZoom = minimap:GetZoomLevels() - 1
-
-    -- Zoom In: disable at max (Button widget auto-shows DisabledTexture which is desaturated)
-    local zoomIn = container.ZoomIn
-    if zoomIn then
-        zoomIn:SetEnabled(zoom < maxZoom)
-    end
-
-    -- Zoom Out: disable at min
-    local zoomOut = container.ZoomOut
-    if zoomOut then
-        zoomOut:SetEnabled(zoom > 0)
-    end
-end
-
-function Plugin:CreateZoomButtons()
-    -- Container holds both buttons so they move as a single unit in canvas mode
-    local container = CreateFrame("Frame", nil, self.frame.Overlay)
-    container:SetSize(ZOOM_BUTTON_W, ZOOM_BUTTON_IN_H + 2 + ZOOM_BUTTON_OUT_H)
-    container:SetPoint("RIGHT", self.frame, "RIGHT", -2, 0)
-    self.frame.ZoomContainer = container
-
-    -- Hidden icon for canvas mode dock preview (sized to match ZoomIn button)
-    container.Icon = container:CreateTexture(nil, "ARTWORK")
-    container.Icon:SetSize(ZOOM_BUTTON_W, ZOOM_BUTTON_W)
-    container.Icon:SetPoint("CENTER")
-    container.Icon:SetAlpha(0)
-
-    -- Zoom In (17x17, matching Blizzard XML)
-    local zoomIn = CreateFrame("Button", nil, container)
-    zoomIn:SetSize(ZOOM_BUTTON_W, ZOOM_BUTTON_IN_H)
-    zoomIn:SetPoint("TOP", container, "TOP", 0, 0)
-    zoomIn:SetNormalAtlas("ui-hud-minimap-zoom-in")
-    zoomIn:SetPushedAtlas("ui-hud-minimap-zoom-in-down")
-    zoomIn:SetHighlightAtlas("ui-hud-minimap-zoom-in-mouseover")
-    zoomIn:SetDisabledAtlas("ui-hud-minimap-zoom-in")
-    zoomIn:GetDisabledTexture():SetDesaturated(true)
-    zoomIn:SetScript("OnClick", function()
-        local minimap = GetBlizzardMinimap()
-        if minimap then
-            local zoom = minimap:GetZoom()
-            if zoom < minimap:GetZoomLevels() - 1 then
-                minimap:SetZoom(zoom + 1)
-            end
-        end
-        self:UpdateZoomState()
-    end)
-    zoomIn:SetScript("OnEnter", function(btn)
-        GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
-        GameTooltip:SetText("Zoom In")
-        GameTooltip:Show()
-    end)
-    zoomIn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    container.ZoomIn = zoomIn
-
-    -- Zoom Out (17x9, matching Blizzard XML)
-    local zoomOut = CreateFrame("Button", nil, container)
-    zoomOut:SetSize(ZOOM_BUTTON_W, ZOOM_BUTTON_OUT_H)
-    zoomOut:SetPoint("TOP", zoomIn, "BOTTOM", 0, -2)
-    zoomOut:SetNormalAtlas("ui-hud-minimap-zoom-out")
-    zoomOut:SetPushedAtlas("ui-hud-minimap-zoom-out-down")
-    zoomOut:SetHighlightAtlas("ui-hud-minimap-zoom-out-mouseover")
-    zoomOut:SetDisabledAtlas("ui-hud-minimap-zoom-out")
-    zoomOut:GetDisabledTexture():SetDesaturated(true)
-    zoomOut:SetScript("OnClick", function()
-        local minimap = GetBlizzardMinimap()
-        if minimap then
-            local zoom = minimap:GetZoom()
-            if zoom > 0 then
-                minimap:SetZoom(zoom - 1)
-            end
-        end
-        self:UpdateZoomState()
-    end)
-    zoomOut:SetScript("OnEnter", function(btn)
-        GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
-        GameTooltip:SetText("Zoom Out")
-        GameTooltip:Show()
-    end)
-    zoomOut:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    container.ZoomOut = zoomOut
-
-    -- Hover-reveal: show on minimap mouseenter, hide on mouseleave
-    container:SetAlpha(0)
-
-    self.frame:HookScript("OnEnter", function()
-        if not self:IsComponentDisabled("Zoom") then
-            UIFrameFadeIn(container, ZOOM_FADE_IN, container:GetAlpha(), 1)
-        end
-    end)
-    self.frame:HookScript("OnLeave", function()
-        if not container:IsMouseOver() then
-            UIFrameFadeOut(container, ZOOM_FADE_OUT, container:GetAlpha(), 0)
-        end
-    end)
-    container:SetScript("OnLeave", function(f)
-        if not self.frame:IsMouseOver() and not f:IsMouseOver() then
-            UIFrameFadeOut(f, ZOOM_FADE_OUT, f:GetAlpha(), 0)
-        end
-    end)
-
-    -- Also hook the minimap render surface for hover
-    local minimap = GetBlizzardMinimap()
-    if minimap then
-        minimap:HookScript("OnEnter", function()
-            if not self:IsComponentDisabled("Zoom") then
-                UIFrameFadeIn(container, ZOOM_FADE_IN, container:GetAlpha(), 1)
-            end
-        end)
-        minimap:HookScript("OnLeave", function()
-            if not container:IsMouseOver() and not self.frame:IsMouseOver() then
-                UIFrameFadeOut(container, ZOOM_FADE_OUT, container:GetAlpha(), 0)
-            end
-        end)
-    end
-end
-
--- [ BLIZZARD COMPONENT REPARENTING ]----------------------------------------------------------------
-
-function Plugin:ReparentBlizzardComponents()
-    local overlay = self.frame.Overlay
-
-    -- Instance Difficulty indicator
-    local difficulty = MinimapCluster and MinimapCluster.InstanceDifficulty
-    if difficulty then
-        self._origDifficultyParent = difficulty:GetParent()
-        difficulty:SetParent(overlay)
-        difficulty:ClearAllPoints()
-        difficulty:SetPoint("CENTER", self.frame, "TOPLEFT", 20, -20)
-        -- Hidden icon for canvas mode dock preview (texture left empty; atlas resolved via IconPreviewAtlases)
-        if not difficulty.Icon then
-            difficulty.Icon = difficulty:CreateTexture(nil, "ARTWORK")
-            difficulty.Icon:SetSize(16, 16)
-            difficulty.Icon:SetPoint("CENTER")
-            difficulty.Icon:SetAlpha(0)
-        end
-        self.frame.Difficulty = difficulty
-    end
-
-    -- Expansion Landing Page (Missions) button
-    local missions = ExpansionLandingPageMinimapButton
-    if missions then
-        self._origMissionsParent = missions:GetParent()
-        missions:SetParent(overlay)
-        missions:ClearAllPoints()
-        missions:SetPoint("CENTER", self.frame, "BOTTOMLEFT", 20, 20)
-        missions:SetSize(MISSIONS_BASE_SIZE, MISSIONS_BASE_SIZE) -- slightly smaller than default 53×53 to fit minimap
-        -- Hidden icon for canvas mode dock/cycling preview.
-        -- Must be sized to MISSIONS_BASE_SIZE so CyclingAtlas creator's GetSourceSize
-        -- returns the correct dimensions for the crossfade preview.
-        if not missions.Icon then
-            missions.Icon = missions:CreateTexture(nil, "ARTWORK")
-            missions.Icon:SetPoint("CENTER")
-            missions.Icon:SetAlpha(0)
-        end
-        missions.Icon:SetSize(MISSIONS_BASE_SIZE, MISSIONS_BASE_SIZE)
-        self.frame.Missions = missions
-    end
-
-    -- New Mail indicator
-    local mail = MinimapCluster and MinimapCluster.IndicatorFrame and MinimapCluster.IndicatorFrame.MailFrame
-    if mail then
-        self._origMailParent = mail:GetParent()
-        mail:SetParent(overlay)
-        mail:ClearAllPoints()
-        mail:SetPoint("CENTER", self.frame, "TOPRIGHT", -20, -20)
-        -- Explicitly show the frame so its event handling stays active
-        mail:Show()
-        -- Re-trigger mail notification after reparent via the mixin's own logic so
-        -- flipbook animations (NewMailAnim, MailReminderAnim) play correctly.
-        -- Never manually set MailIcon visibility — that bypasses the animations.
-        if mail.TryPlayMailNotification and HasNewMail and HasNewMail() then
-            mail:TryPlayMailNotification()
-        end
-        -- Hidden icon for canvas mode dock preview (texture left empty; atlas resolved via IconPreviewAtlases)
-        if not mail.Icon then
-            mail.Icon = mail:CreateTexture(nil, "ARTWORK")
-            mail.Icon:SetSize(16, 16)
-            mail.Icon:SetPoint("CENTER")
-            mail.Icon:SetAlpha(0)
-        end
-        self.frame.Mail = mail
-    end
-
-    -- Crafting Order indicator
-    local craftingOrder = MinimapCluster and MinimapCluster.IndicatorFrame and
-        MinimapCluster.IndicatorFrame.CraftingOrderFrame
-    if craftingOrder then
-        self._origCraftingOrderParent = craftingOrder:GetParent()
-        craftingOrder:SetParent(overlay)
-        craftingOrder:ClearAllPoints()
-        craftingOrder:SetPoint("CENTER", self.frame, "TOPRIGHT", -20, -38)
-        -- Hidden icon for canvas mode dock preview (texture left empty; atlas resolved via IconPreviewAtlases)
-        if not craftingOrder.Icon then
-            craftingOrder.Icon = craftingOrder:CreateTexture(nil, "ARTWORK")
-            craftingOrder.Icon:SetSize(16, 16)
-            craftingOrder.Icon:SetPoint("CENTER")
-            craftingOrder.Icon:SetAlpha(0)
-        end
-        self.frame.CraftingOrder = craftingOrder
-    end
-end
-
-function Plugin:RestoreBlizzardComponents()
-    -- Difficulty
-    if self.frame.Difficulty and self._origDifficultyParent then
-        self.frame.Difficulty:SetParent(self._origDifficultyParent)
-        self.frame.Difficulty:ClearAllPoints()
-        self.frame.Difficulty = nil
-    end
-
-    -- Missions
-    if self.frame.Missions and self._origMissionsParent then
-        self.frame.Missions:SetScript("OnShow", nil)
-        self.frame.Missions:SetParent(self._origMissionsParent)
-        self.frame.Missions:ClearAllPoints()
-        self.frame.Missions:SetSize(53, 53) -- restore original size
-        self.frame.Missions = nil
-    end
-
-    -- Mail
-    if self.frame.Mail and self._origMailParent then
-        self.frame.Mail:SetScript("OnShow", nil)
-        self.frame.Mail:SetParent(self._origMailParent)
-        self.frame.Mail:ClearAllPoints()
-        self.frame.Mail = nil
-    end
-
-    -- Crafting Order
-    if self.frame.CraftingOrder and self._origCraftingOrderParent then
-        self.frame.CraftingOrder:SetScript("OnShow", nil)
-        self.frame.CraftingOrder:SetParent(self._origCraftingOrderParent)
-        self.frame.CraftingOrder:ClearAllPoints()
-        self.frame.CraftingOrder = nil
-    end
-end
-
--- [ CAPTURE ]---------------------------------------------------------------------------------------
-
-function Plugin:CaptureBlizzardMinimap()
-    local minimap = GetBlizzardMinimap()
-    if not minimap then
-        return
-    end
-
-    -- Strip all default art/chrome
-    StripBlizzardArt()
-
-    -- Reparent the actual render surface into our container
-    minimap:SetParent(self.frame)
-    minimap:ClearAllPoints()
-    minimap:SetAllPoints(self.frame)
-
-    -- Ensure minimap stays interactive
-    minimap:EnableMouse(true)
-    minimap:SetArchBlobRingScalar(0)
-    minimap:SetQuestBlobRingScalar(0)
-
-    -- Apply mask for square clipping
-    minimap:SetMaskTexture("Interface\\BUTTONS\\WHITE8x8")
-
-    -- Protect against Blizzard trying to re-steal the minimap
-    OrbitEngine.FrameGuard:Protect(minimap, self.frame)
-    OrbitEngine.FrameGuard:UpdateProtection(minimap, self.frame, function() self:ApplySettings() end,
-        { enforceShow = true })
-
-    -- Hook SetPoint to prevent Blizzard from repositioning
-    if not minimap._orbitSetPointHooked then
-        hooksecurefunc(minimap, "SetPoint", function(f, ...)
-            if f._orbitRestoringPoint then
-                return
-            end
-            if f:GetParent() == self.frame then
-                local point = ...
-                if point ~= "TOPLEFT" or select(2, ...) ~= self.frame then
-                    f._orbitRestoringPoint = true
-                    local ok, err = pcall(function()
-                        f:ClearAllPoints()
-                        f:SetAllPoints(self.frame)
-                    end)
-                    f._orbitRestoringPoint = nil
-                    if not ok then
-                        print("|cffff0000Orbit Minimap SetPoint guard error:|r", err)
-                    end
-                end
-            end
-        end)
-        minimap._orbitSetPointHooked = true
-    end
-
-    -- Right-click on the minimap opens the tracking menu
-    if not minimap._orbitRightClickHooked then
-        minimap:SetScript("OnMouseUp", function(f, button)
-            if button == "RightButton" then
-                local nativeButton = MinimapCluster and MinimapCluster.Tracking and MinimapCluster.Tracking.Button
-                if nativeButton and nativeButton.menuGenerator then
-                    -- Open the tracking menu anchored to our minimap frame instead of
-                    -- the hidden native button, so it appears adjacent to the minimap.
-                    local menuMixin = (f.menuMixin or MenuVariants.GetDefaultContextMenuMixin())
-                    local description = MenuUtil.CreateRootMenuDescription(menuMixin)
-                    Menu.PopulateDescription(nativeButton.menuGenerator, nativeButton, description)
-                    local anchor = AnchorUtil.CreateAnchor("TOPLEFT", f, "BOTTOMLEFT", 0, 0)
-                    Menu.GetManager():OpenMenu(f, description, anchor)
-                end
-            end
-        end)
-        minimap._orbitRightClickHooked = true
-    end
-
-    -- Update zoom button state after scroll-wheel zoom
-    if not minimap._orbitScrollHooked then
-        minimap:HookScript("OnMouseWheel", function() self:UpdateZoomState() end)
-        minimap._orbitScrollHooked = true
-    end
-
-    self._captured = true
-end
-
--- [ APPLY SETTINGS ]--------------------------------------------------------------------------------
 
 local function ApplyIconScale(frame, overrides, baseW)
     if not frame then return end
@@ -715,9 +278,6 @@ end
 
 function Plugin:ApplySettings()
     local frame = self.frame
-    if not frame then
-        return
-    end
     if InCombatLockdown() then
         Orbit.CombatManager:QueueUpdate(function() self:ApplySettings() end)
         return
@@ -731,19 +291,21 @@ function Plugin:ApplySettings()
     -- Size (square minimap)
     frame:SetSize(size, size)
 
-    -- Force the Minimap render surface to match the container size.
-    -- SetAllPoints establishes the anchor relationship but Blizzard internally calls
-    -- Minimap:SetSize() which can override it; we must explicitly keep them in sync.
-    local minimapSurface = GetBlizzardMinimap()
+    -- Keep the Minimap render surface in sync with the container.
+    local minimapSurface = self:GetBlizzardMinimap()
     if minimapSurface and minimapSurface:GetParent() == frame then
         minimapSurface:SetSize(size, size)
     end
 
-    -- Border
-    local backdropColor = Orbit.db.GlobalSettings.BackdropColour or { r = 0.145, g = 0.145, b = 0.145, a = 0.7 }
-    Orbit.Skin:SkinBorder(frame, frame, borderSize, BORDER_COLOR)
+    -- Shape + Border
+    self:ApplyShape()
+
+    -- Rotate minimap
+    local rotate = self:GetSetting(SYSTEM_ID, "RotateMinimap") and true or false
+    SetCVar("rotateMinimap", rotate and "1" or "0")
 
     -- Background
+    local backdropColor = Orbit.db.GlobalSettings.BackdropColour or { r = 0.145, g = 0.145, b = 0.145, a = 0.7 }
     if frame.bg then
         frame.bg:SetColorTexture(backdropColor.r, backdropColor.g, backdropColor.b, backdropColor.a)
     end
@@ -765,7 +327,7 @@ function Plugin:ApplySettings()
             fontSize = zoneTextSize * textMultiplier,
             fontPath = LSM:Fetch("font", Orbit.db.GlobalSettings.Font),
         })
-        UpdateZoneText(frame.ZoneText, self:GetSetting(SYSTEM_ID, "ZoneTextColoring"), zoneOverrides)
+        self:UpdateZoneText(frame.ZoneText, self:GetSetting(SYSTEM_ID, "ZoneTextColoring"), zoneOverrides)
     else
         frame.ZoneText:Hide()
     end
@@ -793,7 +355,7 @@ function Plugin:ApplySettings()
     if not self:IsComponentDisabled("Coords") then
         frame.Coords:Show()
         local coordsOverrides = (savedPositions.Coords or {}).overrides or {}
-        local coordsText = frame.Coords.Text or frame.Coords
+        local coordsText = frame.Coords.Text
         Orbit.Skin:SkinText(coordsText, {
             font = Orbit.db.GlobalSettings.Font,
             textSize = (zoneTextSize - 1) * textMultiplier,
@@ -880,8 +442,8 @@ function Plugin:ApplySettings()
     -- Restore position from saved variables
     OrbitEngine.Frame:RestorePosition(frame, self, SYSTEM_ID)
 
-    -- Ensure minimap is parented correctly (in case of reload)
-    local minimap = GetBlizzardMinimap()
+    -- Ensure minimap is captured (e.g. after reload).
+    local minimap = self:GetBlizzardMinimap()
     if minimap and minimap:GetParent() ~= frame then
         self:CaptureBlizzardMinimap()
     end
@@ -898,26 +460,7 @@ function Plugin:ApplySettings()
     end
 end
 
--- [ CALENDAR PENDING INVITES ]----------------------------------------------------------------------
-
-function Plugin:UpdateCalendarInvites()
-    if not self.frame or not self.frame.Clock then
-        return
-    end
-    local glow = self.frame.Clock.InviteGlow
-    if not glow then
-        return
-    end
-    local pending = C_Calendar.GetNumPendingInvites and C_Calendar.GetNumPendingInvites() or 0
-    if pending > 0 then
-        glow:Show()
-    else
-        glow:Hide()
-    end
-end
-
 -- [ TEARDOWN ]--------------------------------------------------------------------------------------
--- Called when the plugin is live-toggled off. Restores Blizzard state and cancels timers.
 
 function Plugin:OnDisable()
     -- Stop tickers
@@ -936,18 +479,12 @@ function Plugin:OnDisable()
     -- Restore reparented Blizzard components to their original parents
     self:RestoreBlizzardComponents()
 
-    -- Restore Blizzard minimap to its original parent
-    local minimap = GetBlizzardMinimap()
-    local cluster = GetBlizzardCluster()
+    local minimap = self:GetBlizzardMinimap()
+    local cluster = self:GetBlizzardCluster()
     if minimap and cluster then
         minimap:SetParent(cluster)
         minimap:ClearAllPoints()
-        -- Default Blizzard minimap offset within MinimapCluster as of 12.0
         minimap:SetPoint("CENTER", cluster, "CENTER", 9, -1)
     end
-
-    -- Re-show the Blizzard cluster
-    if cluster then
-        cluster:Show()
-    end
+    if cluster then cluster:Show() end
 end
