@@ -9,6 +9,12 @@ local GetSourceSize = CanvasMode.GetSourceSize
 
 local ZOOM_BUTTON_GAP = 2
 
+-- Keys that are reparented Blizzard frames — no border/skin on canvas preview
+local NO_BORDER_KEYS = {
+    Missions = true, Mail = true, CraftingOrder = true,
+    Difficulty = true, Compartment = true,
+}
+
 -- [ CREATOR ]---------------------------------------------------------------------------------------
 
 local function Create(container, preview, key, source, data)
@@ -80,11 +86,13 @@ local function Create(container, preview, key, source, data)
             end
         end
 
-        local scale = btn:GetEffectiveScale() or 1
-        local globalBorder = Orbit.db.GlobalSettings.BorderSize or Orbit.Engine.Pixel:DefaultBorderSize(scale)
-        if Orbit.Skin and Orbit.Skin.Icons then
-            Orbit.Skin.Icons:ApplyCustom(btn, { zoom = 0, borderStyle = 1, borderSize = globalBorder, showTimer = false })
-            Orbit.Skin:SkinBorder(btn, btn, globalBorder)
+        if not NO_BORDER_KEYS[key] then
+            local scale = btn:GetEffectiveScale() or 1
+            local globalBorder = Orbit.db.GlobalSettings.BorderSize or Orbit.Engine.Pixel:DefaultBorderSize(scale)
+            if Orbit.Skin and Orbit.Skin.Icons then
+                Orbit.Skin.Icons:ApplyCustom(btn, { zoom = 0, borderStyle = 1, borderSize = globalBorder, showTimer = false })
+                Orbit.Skin:SkinBorder(btn, btn, globalBorder)
+            end
         end
 
         visual = btn

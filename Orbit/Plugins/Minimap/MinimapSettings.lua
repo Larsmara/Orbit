@@ -20,15 +20,6 @@ function Plugin:AddSettings(dialog, systemFrame)
         controls = {},
     }
 
-    -- Scale
-    SB:AddSizeSettings(self, schema, systemIndex, systemFrame, nil, nil, {
-        key = "Scale",
-        label = "Scale",
-        default = 100,
-        min = 50,
-        max = 200,
-    })
-
     -- Opacity
     SB:AddOpacitySettings(self, schema, systemIndex, systemFrame)
 

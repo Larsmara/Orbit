@@ -10,7 +10,6 @@ local Plugin = Orbit:RegisterPlugin("Minimap", SYSTEM_ID, {
     liveToggle = true,
     canvasMode = true,
     defaults = {
-        Scale = 100,
         Opacity = 100,
         Size = 200,
         ZoneTextSize = 12,
@@ -131,7 +130,7 @@ function Plugin:OnLoad()
     Orbit.IconPreviewAtlases = Orbit.IconPreviewAtlases or {}
     Orbit.IconPreviewAtlases.Zoom = "common-icon-zoomin"
     Orbit.IconPreviewAtlases.Difficulty = "UI-HUD-UnitFrame-Player-PVP-FFAIcon"
-    Orbit.IconPreviewAtlases.Missions = "GarrLanding-MinimapIcon-Horde-Up"
+    -- Missions uses CyclingAtlas creator; no static fallback needed
     Orbit.IconPreviewAtlases.Mail = "ui-hud-minimap-mail-up"
     Orbit.IconPreviewAtlases.CraftingOrder = "UI-HUD-Minimap-CraftingOrder-Up"
 
@@ -238,10 +237,14 @@ function Plugin:OnLoad()
 
     Orbit.EventBus:On("CALENDAR_UPDATE_PENDING_INVITES", function() self:UpdateCalendarInvites() end, self)
 
-    -- [ Coords component ]
-    self.frame.Coords = self.frame.Overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    -- [ Coords component ] — wrapper frame holds the FontString so ComponentDrag can move it
+    self.frame.Coords = CreateFrame("Frame", nil, self.frame.Overlay)
+    self.frame.Coords:SetSize(80, 16)
     self.frame.Coords:SetPoint("BOTTOMRIGHT", self.frame, "BOTTOMRIGHT", -4, 4)
-    self.frame.Coords:SetJustifyH("RIGHT")
+    self.frame.Coords.Text = self.frame.Coords:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    self.frame.Coords.Text:SetAllPoints()
+    self.frame.Coords.Text:SetJustifyH("RIGHT")
+    self.frame.Coords.visual = self.frame.Coords.Text -- canvas override target
 
     -- [ Compartment component ]
     self:CreateCompartmentButton()
@@ -257,7 +260,11 @@ function Plugin:OnLoad()
     OrbitEngine.ComponentDrag:Attach(self.frame.ZoneText, self.frame,
         { key = "ZoneText", onPositionChange = MPC("ZoneText") })
     OrbitEngine.ComponentDrag:Attach(self.frame.Clock, self.frame, { key = "Clock", onPositionChange = MPC("Clock") })
-    OrbitEngine.ComponentDrag:Attach(self.frame.Coords, self.frame, { key = "Coords", onPositionChange = MPC("Coords") })
+    OrbitEngine.ComponentDrag:Attach(self.frame.Coords, self.frame, {
+        key = "Coords",
+        sourceOverride = self.frame.Coords.Text,
+        onPositionChange = MPC("Coords"),
+    })
     OrbitEngine.ComponentDrag:Attach(self._compartmentButton, self.frame,
         { key = "Compartment", onPositionChange = MPC("Compartment") })
     OrbitEngine.ComponentDrag:Attach(self.frame.ZoomContainer, self.frame,
@@ -338,18 +345,21 @@ function Plugin:UpdateCoords()
     if not self.frame or not self.frame.Coords then
         return
     end
+    local fs = self.frame.Coords.Text or self.frame.Coords
     local map = C_Map.GetBestMapForUnit("player")
     if not map then
-        self.frame.Coords:SetText("")
+        fs:SetText("")
         return
     end
     local pos = C_Map.GetPlayerMapPosition(map, "player")
     if not pos then
-        self.frame.Coords:SetText("")
+        fs:SetText("")
         return
     end
     local x, y = pos:GetXY()
-    self.frame.Coords:SetFormattedText("%.1f, %.1f", x * 100, y * 100)
+    fs:SetFormattedText("%.1f, %.1f", x * 100, y * 100)
+    -- Resize wrapper to text extents
+    self.frame.Coords:SetSize(fs:GetStringWidth() + 2, fs:GetStringHeight() + 2)
 end
 
 function Plugin:StartCoordsTicker()
@@ -380,26 +390,16 @@ function Plugin:UpdateZoomState()
     local zoom = minimap:GetZoom()
     local maxZoom = minimap:GetZoomLevels() - 1
 
-    -- Zoom In: disable at max
+    -- Zoom In: disable at max (Button widget auto-shows DisabledTexture which is desaturated)
     local zoomIn = container.ZoomIn
     if zoomIn then
-        local atMax = zoom >= maxZoom
-        zoomIn:SetEnabled(not atMax)
-        zoomIn:SetAlpha(atMax and 0.35 or 1)
-        if zoomIn.icon then
-            zoomIn.icon:SetDesaturated(atMax)
-        end
+        zoomIn:SetEnabled(zoom < maxZoom)
     end
 
     -- Zoom Out: disable at min
     local zoomOut = container.ZoomOut
     if zoomOut then
-        local atMin = zoom <= 0
-        zoomOut:SetEnabled(not atMin)
-        zoomOut:SetAlpha(atMin and 0.35 or 1)
-        if zoomOut.icon then
-            zoomOut.icon:SetDesaturated(atMin)
-        end
+        zoomOut:SetEnabled(zoom > 0)
     end
 end
 
@@ -420,10 +420,11 @@ function Plugin:CreateZoomButtons()
     local zoomIn = CreateFrame("Button", nil, container)
     zoomIn:SetSize(ZOOM_BUTTON_SIZE, ZOOM_BUTTON_SIZE)
     zoomIn:SetPoint("TOP", container, "TOP", 0, 0)
-    local zoomInTex = zoomIn:CreateTexture(nil, "ARTWORK")
-    zoomInTex:SetAllPoints()
-    zoomInTex:SetAtlas("ui-hud-minimap-zoom-in")
-    zoomIn.icon = zoomInTex
+    zoomIn:SetNormalAtlas("ui-hud-minimap-zoom-in")
+    zoomIn:SetPushedAtlas("ui-hud-minimap-zoom-in-down")
+    zoomIn:SetHighlightAtlas("ui-hud-minimap-zoom-in-mouseover")
+    zoomIn:SetDisabledAtlas("ui-hud-minimap-zoom-in")
+    zoomIn:GetDisabledTexture():SetDesaturated(true)
     zoomIn:SetScript("OnClick", function()
         local minimap = GetBlizzardMinimap()
         if minimap then
@@ -446,10 +447,11 @@ function Plugin:CreateZoomButtons()
     local zoomOut = CreateFrame("Button", nil, container)
     zoomOut:SetSize(ZOOM_BUTTON_SIZE, ZOOM_BUTTON_SIZE)
     zoomOut:SetPoint("TOP", zoomIn, "BOTTOM", 0, -2)
-    local zoomOutTex = zoomOut:CreateTexture(nil, "ARTWORK")
-    zoomOutTex:SetAllPoints()
-    zoomOutTex:SetAtlas("ui-hud-minimap-zoom-out")
-    zoomOut.icon = zoomOutTex
+    zoomOut:SetNormalAtlas("ui-hud-minimap-zoom-out")
+    zoomOut:SetPushedAtlas("ui-hud-minimap-zoom-out-down")
+    zoomOut:SetHighlightAtlas("ui-hud-minimap-zoom-out-mouseover")
+    zoomOut:SetDisabledAtlas("ui-hud-minimap-zoom-out")
+    zoomOut:GetDisabledTexture():SetDesaturated(true)
     zoomOut:SetScript("OnClick", function()
         local minimap = GetBlizzardMinimap()
         if minimap then
@@ -550,6 +552,14 @@ function Plugin:ReparentBlizzardComponents()
         mail:SetParent(overlay)
         mail:ClearAllPoints()
         mail:SetPoint("CENTER", self.frame, "TOPRIGHT", -20, -20)
+        -- Explicitly show the frame so its event handling stays active
+        mail:Show()
+        -- Re-trigger mail notification state after reparent (cluster hide may have reset it)
+        if mail.TryPlayMailNotification and HasNewMail and HasNewMail() then
+            mail:TryPlayMailNotification()
+        elseif mail.MailIcon then
+            mail.MailIcon:SetShown(HasNewMail and HasNewMail() or false)
+        end
         -- Hidden icon for canvas mode dock preview (texture left empty; atlas resolved via IconPreviewAtlases)
         if not mail.Icon then
             mail.Icon = mail:CreateTexture(nil, "ARTWORK")
@@ -672,7 +682,14 @@ function Plugin:CaptureBlizzardMinimap()
             if button == "RightButton" then
                 local nativeButton = MinimapCluster and MinimapCluster.Tracking and MinimapCluster.Tracking.Button
                 if nativeButton and nativeButton.menuGenerator then
-                    MenuUtil.CreateContextMenu(f, nativeButton.menuGenerator)
+                    local menu = MenuUtil.CreateContextMenu(f, nativeButton.menuGenerator)
+                    -- Scale the menu down to compensate for the minimap container's scale
+                    if menu and self.frame then
+                        local containerScale = self.frame:GetScale() or 1
+                        if containerScale ~= 1 then
+                            menu:SetScale(menu:GetScale() / containerScale)
+                        end
+                    end
                 end
             end
         end)
@@ -707,13 +724,9 @@ function Plugin:ApplySettings()
     end
 
     local isEditMode = Orbit:IsEditMode()
-    local scale = (self:GetSetting(SYSTEM_ID, "Scale") or 100) / 100
     local size = self:GetSetting(SYSTEM_ID, "Size") or DEFAULT_SIZE
     local zoneTextSize = self:GetSetting(SYSTEM_ID, "ZoneTextSize") or 12
     local borderSize = Orbit.db.GlobalSettings.BorderSize or 2
-
-    -- Scale
-    frame:SetScale(scale)
 
     -- Size (square minimap)
     frame:SetSize(size, size)
@@ -772,11 +785,12 @@ function Plugin:ApplySettings()
     if not self:IsComponentDisabled("Coords") then
         frame.Coords:Show()
         local coordsOverrides = (savedPositions.Coords or {}).overrides or {}
-        Orbit.Skin:SkinText(frame.Coords, {
+        local coordsText = frame.Coords.Text or frame.Coords
+        Orbit.Skin:SkinText(coordsText, {
             font = Orbit.db.GlobalSettings.Font,
             textSize = (zoneTextSize - 1) * textMultiplier,
         })
-        OrbitEngine.OverrideUtils.ApplyOverrides(frame.Coords, coordsOverrides, {
+        OrbitEngine.OverrideUtils.ApplyOverrides(coordsText, coordsOverrides, {
             fontSize = (zoneTextSize - 1) * textMultiplier,
             fontPath = LSM:Fetch("font", Orbit.db.GlobalSettings.Font),
         })

@@ -362,6 +362,7 @@ function ComponentDrag:Attach(component, parent, options)
         currentAlignment = "LEFT",
         isFontString = component.IsObjectType and component:IsObjectType("FontString") or false,
         isAuraContainer = options.isAuraContainer or false,
+        sourceOverride = options.sourceOverride or nil,
 
         guides = Engine.SmartGuides and Engine.SmartGuides:Create(parent) or nil,
         handle = nil,
@@ -557,7 +558,7 @@ function ComponentDrag:GetComponentsForFrame(frame)
                 offsetX = data.offsetX,
                 offsetY = data.offsetY,
                 justifyH = data.justifyH,
-                component = comp,
+                component = data.sourceOverride or comp,
                 originalText = comp.GetText and comp:GetText() or nil,
             }
         end
