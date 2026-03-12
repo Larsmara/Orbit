@@ -358,14 +358,7 @@ function Plugin:OnLoad()
     local function UpdateVisibilityDriver()
         if InCombatLockdown() or Orbit:IsEditMode() then return end
         local _, instanceType = IsInInstance()
-        local driver
-        if instanceType == "arena" then
-            driver = RAID_DRIVER_ARENA
-        elseif instanceType == "pvp" then
-            driver = RAID_DRIVER_PVP
-        else
-            driver = RAID_DRIVER_OPEN
-        end
+        local driver = instanceType == "arena" and RAID_DRIVER_ARENA or instanceType == "pvp" and RAID_DRIVER_PVP or RAID_DRIVER_OPEN
         RegisterStateDriver(self.container, "visibility", driver)
     end
     self.UpdateVisibilityDriver = function() UpdateVisibilityDriver() end
@@ -387,21 +380,10 @@ function Plugin:OnLoad()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
     eventFrame:SetScript("OnEvent", function(_, event)
-        if event == "PLAYER_ENTERING_WORLD" then
-            -- Defer to let WoW settle group/instance state after a zone transition
-            C_Timer.After(0.5, function()
-                UpdateVisibilityDriver()
-                self:UpdateFrameUnits()
-            end)
-            return
-        end
+        if event == "PLAYER_ENTERING_WORLD" then C_Timer.After(0.5, function() UpdateVisibilityDriver(); self:UpdateFrameUnits() end); return end
         if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ROLES_ASSIGNED" then
             UpdateVisibilityDriver()
-            if not InCombatLockdown() then
-                self:UpdateFrameUnits()
-            else
-                SchedulePrivateAuraReanchor(self)
-            end
+            if not InCombatLockdown() then self:UpdateFrameUnits() else SchedulePrivateAuraReanchor(self) end
             for _, frame in ipairs(self.frames) do
                 if frame.unit then
                     UpdateInRange(frame)
@@ -410,10 +392,7 @@ function Plugin:OnLoad()
                 end
             end
         end
-        if event == "PLAYER_REGEN_ENABLED" then
-            UpdateVisibilityDriver()
-            self:UpdateFrameUnits()
-        end
+        if event == "PLAYER_REGEN_ENABLED" then UpdateVisibilityDriver(); self:UpdateFrameUnits() end
         if not InCombatLockdown() then
             self:PositionFrames()
             self:UpdateContainerSize()

@@ -472,14 +472,7 @@ function Plugin:OnLoad()
     local function UpdateVisibilityDriver(plugin)
         if InCombatLockdown() or Orbit:IsEditMode() then return end
         local _, instanceType = IsInInstance()
-        local driver
-        if instanceType == "arena" then
-            driver = PARTY_DRIVER_ARENA
-        elseif instanceType == "pvp" then
-            driver = PARTY_DRIVER_PVP
-        else
-            driver = PARTY_DRIVER_OPEN
-        end
+        local driver = instanceType == "arena" and PARTY_DRIVER_ARENA or instanceType == "pvp" and PARTY_DRIVER_PVP or PARTY_DRIVER_OPEN
         RegisterStateDriver(plugin.container, "visibility", driver)
     end
     self.UpdateVisibilityDriver = function() UpdateVisibilityDriver(self) end
@@ -509,20 +502,10 @@ function Plugin:OnLoad()
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
     eventFrame:SetScript("OnEvent", function(_, event)
-        if event == "PLAYER_ENTERING_WORLD" then
-            -- Defer to let WoW settle group/instance state after a zone transition
-            C_Timer.After(0.5, function()
-                UpdateVisibilityDriver(self)
-                self:UpdateFrameUnits()
-            end)
-            return
-        end
+        if event == "PLAYER_ENTERING_WORLD" then C_Timer.After(0.5, function() UpdateVisibilityDriver(self); self:UpdateFrameUnits() end); return end
         if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ROLES_ASSIGNED" then
-            -- Re-evaluate driver on roster changes (e.g. post-arena party dissolution)
-            UpdateVisibilityDriver(self)
-            if not InCombatLockdown() then
-                self:UpdateFrameUnits()
-            end
+            UpdateVisibilityDriver(self) -- Re-evaluate driver on roster changes
+            if not InCombatLockdown() then self:UpdateFrameUnits() end
             for i, frame in ipairs(self.frames) do
                 if frame.unit then
                     UpdateInRange(frame)
@@ -532,10 +515,7 @@ function Plugin:OnLoad()
             end
         end
 
-        -- Update container size and reposition frames if out of combat
-        if event == "PLAYER_REGEN_ENABLED" then
-            UpdateVisibilityDriver(self)
-        end
+        if event == "PLAYER_REGEN_ENABLED" then UpdateVisibilityDriver(self) end
         if not InCombatLockdown() then
             self:PositionFrames()
             self:UpdateContainerSize()

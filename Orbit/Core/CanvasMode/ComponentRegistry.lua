@@ -455,49 +455,20 @@ function ComponentDrag:RestoreFramePositions(parent, positions)
                 local offsetX = pos.offsetX or 0
                 local offsetY = pos.offsetY or 0
 
-                local anchorPoint
-                if anchorY == "CENTER" and anchorX == "CENTER" then
-                    anchorPoint = "CENTER"
-                elseif anchorY == "CENTER" then
-                    anchorPoint = anchorX
-                elseif anchorX == "CENTER" then
-                    anchorPoint = anchorY
-                else
-                    anchorPoint = anchorY .. anchorX
-                end
-
-                local finalX = offsetX
-                local finalY = offsetY
-                if anchorX == "RIGHT" then
-                    finalX = -offsetX
-                end
-                if anchorY == "TOP" then
-                    finalY = -offsetY
-                end
+                local anchorPoint = (anchorY == "CENTER" and anchorX == "CENTER") and "CENTER" or anchorY == "CENTER" and anchorX or anchorX == "CENTER" and anchorY or anchorY .. anchorX
+                local finalX = anchorX == "RIGHT" and -offsetX or offsetX
+                local finalY = anchorY == "TOP" and -offsetY or offsetY
 
                 component:ClearAllPoints()
-
-                if pos.justifyH and component.SetJustifyH then
-                    component:SetJustifyH(pos.justifyH)
-                end
-
+                if pos.justifyH and component.SetJustifyH then component:SetJustifyH(pos.justifyH) end
                 local selfAnchorY = pos.selfAnchorY or anchorY
                 local selfAnchor = BuildComponentSelfAnchor(data.isFontString, data.isAuraContainer, selfAnchorY, pos.justifyH)
                 local s = component:GetScale() or 1
                 component:SetPoint(selfAnchor, componentParent, anchorPoint, (s > 0) and (finalX / s) or finalX, (s > 0) and (finalY / s) or finalY)
-
-                data.anchorX = anchorX
-                data.anchorY = anchorY
-                data.selfAnchorY = selfAnchorY
-                data.offsetX = offsetX
-                data.offsetY = offsetY
-                data.justifyH = pos.justifyH
+                data.anchorX, data.anchorY, data.selfAnchorY, data.offsetX, data.offsetY, data.justifyH = anchorX, anchorY, selfAnchorY, offsetX, offsetY, pos.justifyH
             end
 
-            if data.handle then
-                data.handle:ClearAllPoints()
-                data.handle:SetPoint("CENTER", component, "CENTER", 0, 0)
-            end
+            if data.handle then data.handle:ClearAllPoints(); data.handle:SetPoint("CENTER", component, "CENTER", 0, 0) end
         end
     end
 end

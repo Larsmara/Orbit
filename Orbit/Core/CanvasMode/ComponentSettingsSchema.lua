@@ -137,12 +137,7 @@ Schema.KEY_SCHEMAS = {
             { type = "colorcurve", key = "CustomColorCurve", label = "Color", singleColor = false },
         },
     },
-    ZoneText = { controls = {
-        { type = "font", key = "Font", label = "Font" },
-        { type = "slider", key = "FontSize", label = "Size", min = 6, max = 32, step = 1 },
-        { type = "colorcurve", key = "CustomColorCurve", label = "Color", singleColor = true },
-        { type = "checkbox", key = "ZoneTextColoring", label = "Zone Coloring", plugin = true, default = false },
-    } },
+    ZoneText = Compose(STATIC_TEXT, { { type = "checkbox", key = "ZoneTextColoring", label = "Zone Coloring", plugin = true, default = false } }),
     Clock = Compose(STATIC_TEXT),
     Coords = Compose(STATIC_TEXT),
 }
