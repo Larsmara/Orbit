@@ -201,8 +201,9 @@ function CDM:ProcessChildren(anchor)
         for barIdx, icon in ipairs(activeChildren) do
             if isBuffBar then
                 ApplyBuffBarSkin(icon, skinSettings, barIdx)
-            else
+            elseif not icon.orbitSkinApplied then
                 Orbit.Skin.Icons:ApplyCustom(icon, skinSettings)
+                icon.orbitSkinApplied = true
             end
             self:HookGCDSwipe(icon, systemIndex)
             if not isBuffBar then self:ApplyTextSettings(icon, systemIndex) end
@@ -382,7 +383,7 @@ local SB = OrbitEngine.SchemaBuilder
 local curveCache = {}
 
 GetNativeTimerCurveForSystem = function(systemIndex)
-    local positions = CDM:GetSetting(systemIndex, "ComponentPositions")
+    local positions = CDM:GetComponentPositions(systemIndex)
     local timerOverrides = positions and positions["Timer"] and positions["Timer"].overrides
     local curveData = timerOverrides and timerOverrides["CustomColorCurve"]
     if not curveData or not curveData.pins or #curveData.pins == 0 then return nil end
@@ -516,9 +517,8 @@ ApplyBuffBarSkin = function(item, skinSettings, barIndex)
     bar:SetPoint("TOPLEFT", item, "TOPLEFT", iconSize, 0)
     bar:SetPoint("BOTTOMRIGHT", item, "BOTTOMRIGHT", 0, 0)
 
-    -- Resolve Canvas Mode positions (read from Transaction if active, else saved settings)
-    local Txn = OrbitEngine.CanvasMode and OrbitEngine.CanvasMode.Transaction
-    local compPositions = (Txn and Txn:IsActive() and Txn:GetPlugin() == CDM) and Txn:GetPositions() or CDM:GetSetting(BUFFBAR_INDEX, "ComponentPositions")
+    -- Resolve Canvas Mode positions (Transaction-aware for live preview)
+    local compPositions = CDM:GetComponentPositions(BUFFBAR_INDEX)
     local OU = OrbitEngine.OverrideUtils
 
     -- StatusBar texture + overlay (global texture setting)
@@ -551,7 +551,7 @@ ApplyBuffBarSkin = function(item, skinSettings, barIndex)
         bar.orbitBorder:SetAllPoints(bar)
         bar.orbitBorder:SetFrameLevel(bar:GetFrameLevel() + 1)
     end
-    Orbit.Skin:SkinBorder(bar, bar.orbitBorder, borderSize, { r = 0, g = 0, b = 0, a = 1 }, true)
+    Orbit.Skin:SkinBorder(bar, bar.orbitBorder, borderSize, nil, true)
 
      -- Hide Blizzard bar chrome
     if bar.BarBG then bar.BarBG:SetAlpha(0) end
@@ -622,7 +622,7 @@ ApplyBuffBarSkin = function(item, skinSettings, barIndex)
             iconFrame.orbitBorder:SetAllPoints(iconFrame)
             iconFrame.orbitBorder:SetFrameLevel(iconFrame:GetFrameLevel() + 2)
         end
-        Orbit.Skin:SkinBorder(iconFrame, iconFrame.orbitBorder, borderSize, { r = 0, g = 0, b = 0, a = 1 }, true)
+        Orbit.Skin:SkinBorder(iconFrame, iconFrame.orbitBorder, borderSize, nil, true)
         -- Hide Blizzard icon overlay atlas
         if not iconFrame.orbitOverlayHidden then
             for _, region in ipairs({ iconFrame:GetRegions() }) do

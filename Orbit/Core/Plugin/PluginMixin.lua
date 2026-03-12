@@ -82,6 +82,19 @@ function Orbit.PluginMixin:OnCanvasApply()
     if self.SchedulePreviewUpdate then self:SchedulePreviewUpdate() end
 end
 
+-- Subscribe to live preview updates during Canvas Mode editing
+function Orbit.PluginMixin:WatchCanvasChanges()
+    self._canvasLiveCallback = function(targetPlugin)
+        if targetPlugin ~= self then return end
+        if InCombatLockdown() then return end
+        local txn = Orbit.Engine.CanvasMode and Orbit.Engine.CanvasMode.Transaction
+        local sysIdx = txn and txn:GetSystemIndex()
+        local frame = sysIdx and self.GetFrameBySystemIndex and self:GetFrameBySystemIndex(sysIdx)
+        if self.ApplySettings then self:ApplySettings(frame) end
+    end
+    Orbit.EventBus:On("CANVAS_SETTINGS_CHANGED", self._canvasLiveCallback)
+end
+
 function Orbit.PluginMixin:GetLayoutID()
     return "Orbit"
 end
@@ -110,6 +123,12 @@ function Orbit.PluginMixin:GetSetting(systemIndex, key)
             end
         end
         return val
+    end
+    -- Canvas Mode Transaction override — return staged values during live preview
+    local txn = self:_ActiveTransaction()
+    if txn then
+        local pending = txn:GetPending(key)
+        if pending ~= nil then return pending end
     end
 
     local node = SafeTablePath(db, layoutID, self.system, systemIndex)
@@ -167,6 +186,10 @@ function Orbit.PluginMixin:RegisterVisibilityEvents()
 end
 
 function Orbit.PluginMixin:UpdateVisibility()
+    if not Orbit:IsPluginEnabled(self.name) then
+        if self.frame then self.frame:Hide() end
+        return
+    end
     local shouldHide = (C_PetBattles and C_PetBattles.IsInBattle()) or (UnitHasVehicleUI and UnitHasVehicleUI("player"))
         or (Orbit.MountedVisibility:ShouldHide())
     if shouldHide then

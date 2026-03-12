@@ -413,14 +413,11 @@ function Plugin:ApplySettings(frame)
     local classColour = true -- Enforced
     frame:SetClassColour(classColour)
 
-    -- Restore positions before visuals (SetFont in overrides clobbers text color)
-    local isInCanvasMode = OrbitEngine.CanvasMode:IsActive(frame)
-    if not isInCanvasMode then
-        local savedPositions = self:GetSetting(systemIndex, "ComponentPositions")
-        if savedPositions then
-            OrbitEngine.ComponentDrag:RestoreFramePositions(frame, savedPositions)
-            if frame.ApplyComponentPositions then frame:ApplyComponentPositions() end
-        end
+    -- Restore component positions (Transaction-aware for live canvas preview)
+    local savedPositions = self:GetComponentPositions(systemIndex)
+    if savedPositions and next(savedPositions) then
+        OrbitEngine.ComponentDrag:RestoreFramePositions(frame, savedPositions)
+        if frame.ApplyComponentPositions then frame:ApplyComponentPositions() end
     end
 
     self:UpdateVisualsExtended(frame, systemIndex)
@@ -433,9 +430,6 @@ function Plugin:ApplySettings(frame)
     self:UpdatePvpIcon(frame, self)
     self:UpdateRestingIcon(frame)
     frame:UpdatePortrait()
-
-    local healthTextMode = self:GetSetting(systemIndex, "HealthTextMode") or "percent_short"
-    if frame.SetHealthTextMode then frame:SetHealthTextMode(healthTextMode) end
 
     local enableHover = self:GetSetting(systemIndex, "ShowOnMouseover") ~= false
     Orbit.OOCFadeMixin:ApplyOOCFade(frame, self, systemIndex, "OutOfCombatFade", enableHover)

@@ -25,6 +25,7 @@ local POWER_CURVE_CONFIG = {
     { key = "LunarPowerColorCurve", label = "Astral Power Colour", powerType = Enum.PowerType.LunarPower },
     { key = "FuryColorCurve", label = "Fury Colour", powerType = Enum.PowerType.Fury },
     { key = "InsanityColorCurve", label = "Insanity Colour", powerType = Enum.PowerType.Insanity },
+    { key = "MaelstromColorCurve", label = "Maelstrom Colour", powerType = Enum.PowerType.Maelstrom },
 }
 
 local CLASS_POWER_TYPES = {
@@ -34,7 +35,7 @@ local CLASS_POWER_TYPES = {
     ROGUE = { Enum.PowerType.Energy },
     PRIEST = { Enum.PowerType.Mana, Enum.PowerType.Insanity },
     DEATHKNIGHT = { Enum.PowerType.RunicPower },
-    SHAMAN = { Enum.PowerType.Mana },
+    SHAMAN = { Enum.PowerType.Mana, Enum.PowerType.Maelstrom },
     MAGE = { Enum.PowerType.Mana },
     WARLOCK = { Enum.PowerType.Mana },
     MONK = { Enum.PowerType.Energy, Enum.PowerType.Mana },
@@ -76,6 +77,7 @@ local Plugin = Orbit:RegisterPlugin("Player Power", SYSTEM_ID, {
         LunarPowerColorCurve = { pins = { { position = 0, color = { r = 0.95, g = 0.9, b = 0.6, a = 1 } } } },
         FuryColorCurve = { pins = { { position = 0, color = { r = 1, g = 0.6, b = 0.2, a = 1 } } } },
         InsanityColorCurve = { pins = { { position = 0, color = { r = 0.6, g = 0.2, b = 1.0, a = 1 } } } },
+        MaelstromColorCurve = { pins = { { position = 0, color = { r = 0.65, g = 0.63, b = 0.35, a = 1 } } } },
         EbonMightColorCurve = { pins = { { position = 0, color = { r = 0.2, g = 0.8, b = 0.4, a = 1 } } } },
         Opacity = 100,
         OutOfCombatFade = false,
@@ -267,6 +269,7 @@ function Plugin:OnLoad()
         anchorOptions = { horizontal = false, vertical = true, mergeBorders = true },
     })
     Frame:SetFrameLevel(Frame:GetFrameLevel() + FRAME_LEVEL_BOOST)
+    Frame.orbitResizeBounds = { minW = 100, maxW = 600, minH = 4, maxH = 25 }
     self.frame = Frame
     self.mountedConfig = { frame = Frame }
 
@@ -379,9 +382,8 @@ function Plugin:RefreshOnUpdate()
 end
 
 function Plugin:UpdateVisibility()
-    if not Frame then
-        return
-    end
+    if not Frame then return end
+    if not Orbit:IsPluginEnabled(self.name) then SafeHide(Frame); return end
     local isEditMode = Orbit:IsEditMode()
     if isEditMode then
         OrbitEngine.FrameAnchor:SetFrameDisabled(Frame, false)
@@ -431,7 +433,7 @@ function Plugin:ApplySettings()
         Frame.Text:Show()
 
         -- Get Canvas Mode overrides
-        local positions = self:GetSetting(systemIndex, "ComponentPositions") or {}
+        local positions = self:GetComponentPositions(systemIndex)
         local textPos = positions.Text or {}
         local overrides = textPos.overrides or {}
 
@@ -456,7 +458,7 @@ function Plugin:ApplySettings()
     OrbitEngine.Frame:RestorePosition(Frame, self, systemIndex)
 
     -- Restore component positions (Canvas Mode)
-    local savedPositions = self:GetSetting(systemIndex, "ComponentPositions")
+    local savedPositions = self:GetComponentPositions(systemIndex)
     if savedPositions and OrbitEngine.ComponentDrag then
         OrbitEngine.ComponentDrag:RestoreFramePositions(Frame, savedPositions)
     end
