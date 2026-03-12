@@ -324,7 +324,7 @@ function ComponentDrag:Attach(component, parent, options)
         currentX = 0,
         currentY = 0,
         currentAlignment = "LEFT",
-        isFontString = component.GetText ~= nil,
+        isFontString = component.IsObjectType and component:IsObjectType("FontString") or false,
         isAuraContainer = options.isAuraContainer or false,
 
         guides = Engine.SmartGuides and Engine.SmartGuides:Create(parent) or nil,
@@ -483,7 +483,8 @@ function ComponentDrag:RestoreFramePositions(parent, positions)
 
                 local selfAnchorY = pos.selfAnchorY or anchorY
                 local selfAnchor = BuildComponentSelfAnchor(data.isFontString, data.isAuraContainer, selfAnchorY, pos.justifyH)
-                component:SetPoint(selfAnchor, componentParent, anchorPoint, finalX, finalY)
+                local s = component:GetScale() or 1
+                component:SetPoint(selfAnchor, componentParent, anchorPoint, (s > 0) and (finalX / s) or finalX, (s > 0) and (finalY / s) or finalY)
 
                 data.anchorX = anchorX
                 data.anchorY = anchorY
@@ -519,7 +520,7 @@ function ComponentDrag:GetComponentsForFrame(frame)
                 offsetX = data.offsetX,
                 offsetY = data.offsetY,
                 justifyH = data.justifyH,
-                component = comp,
+                component = data.sourceOverride or comp,
                 originalText = comp.GetText and comp:GetText() or nil,
             }
         end

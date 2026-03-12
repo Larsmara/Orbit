@@ -248,7 +248,8 @@ function Settings:ApplyPluginPreview()
     local key = self.componentKey
     if key == "CastBar" then self:ApplyCastBarPreview()
     elseif key == "Portrait" then self:ApplyPortraitPreview()
-    elseif key == "HealthText" then self:ApplyHealthTextPreview() end
+    elseif key == "HealthText" then self:ApplyHealthTextPreview()
+    elseif key == "ZoneText" then self:ApplyZoneTextPreview() end
 end
 
 -- [ VALUE CHANGE HANDLER ]--------------------------------------------------------------------------
