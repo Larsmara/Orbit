@@ -72,14 +72,32 @@ function Plugin:ApplyShape()
 end
 
 -- [ BORDER COLOR ] ----------------------------------------------------------------------------------
--- Resolves the class-pin sentinel (`{ type = "class", a = ... }`) to a flat {r,g,b,a}.
+-- Resolves the stored BorderColor setting to a flat {r,g,b,a} table safe to pass to SetVertexColor.
+-- Handles two storage formats:
+--   New (LibOrbitColorPicker): { pins = [{ position, color={r,g,b,a}, type? }] }
+--   Legacy (flat):             { r, g, b, a } or { type = "class", a = ... }
 function Plugin:GetResolvedBorderColor()
     local raw = self:GetSetting(SYSTEM_ID, "BorderColor") or Orbit.MinimapConstants.BORDER_COLOR
+
+    -- New pins-based format stored by LibOrbitColorPicker (single-color mode uses pins[1]).
+    if raw.pins and #raw.pins > 0 then
+        local pin = raw.pins[1]
+        if pin.type == "class" and OrbitEngine.ClassColor then
+            local cc = OrbitEngine.ClassColor:GetCurrentClassColor()
+            return { r = cc.r, g = cc.g, b = cc.b, a = (pin.color and pin.color.a) or 1 }
+        end
+        local c = pin.color
+        if c and c.r and c.g and c.b then return c end
+        return Orbit.MinimapConstants.BORDER_COLOR
+    end
+
+    -- Legacy flat format: { type = "class", a = ... } or { r, g, b, a }.
     if raw.type == "class" and OrbitEngine.ClassColor then
         local cc = OrbitEngine.ClassColor:GetCurrentClassColor()
         return { r = cc.r, g = cc.g, b = cc.b, a = raw.a or 1 }
     end
-    return raw
+    if raw.r and raw.g and raw.b then return raw end
+    return Orbit.MinimapConstants.BORDER_COLOR
 end
 
 -- [ BORDER RING ] -----------------------------------------------------------------------------------
