@@ -407,14 +407,11 @@ function Plugin:HoldTopAnchor()
     end
 end
 
--- override (capped at Height) lets the collapse animation drive the box height per frame so the backdrop tracks the slide; without it the box uses the settled content-fit height.
-function Plugin:ApplyContainerHeight(override)
+function Plugin:ApplyContainerHeight()
     local frame = self.frame
     if not frame then return end
-    -- During the slide (override set), skip the re-pin: HoldTopAnchor could jump the box on a stale anchor. The ScrollFrame is anchored to the box, so SetHeight resizes the viewport and OnScrollRangeChanged re-clamps the scroll.
-    if not override then self:HoldTopAnchor() end
-    local h = override and math.min(override, self:GetSetting(SYSTEM_ID, "Height") or C.DEFAULT_HEIGHT) or self:ResolveContainerHeight()
-    frame:SetHeight(OrbitEngine.Pixel:Snap(h, frame:GetEffectiveScale()))
+    self:HoldTopAnchor()
+    frame:SetHeight(OrbitEngine.Pixel:Snap(self:ResolveContainerHeight(), frame:GetEffectiveScale()))
 end
 
 -- [ BORDER ]-----------------------------------------------------------------------------------------
@@ -517,6 +514,8 @@ end
 
 -- [ COLLAPSE PERSISTENCE ]---------------------------------------------------------------------------
 function Plugin:SaveCollapseState()
+    -- Combat auto-collapse is transient view state — keep it out of the saved layout, else a reload/disconnect mid-combat persists "collapsed" as the user's preference.
+    if self._combatCollapsing then return end
     if not Orbit.db or not Orbit.db.AccountSettings then return end
     local state = {}
 
@@ -613,20 +612,22 @@ function Plugin:InstallCombatCollapseHooks()
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:SetScript("OnEvent", function(_, event)
-        local enabled = self:GetSetting(SYSTEM_ID, "AutoCollapseCombat")
-        if not enabled then return end
-        if not ObjectiveTrackerFrame then return end
+        if not ObjectiveTrackerFrame or not ObjectiveTrackerFrame.SetCollapsed then return end
 
         if event == "PLAYER_REGEN_DISABLED" then
-            -- Save current state before collapsing
+            if not self:GetSetting(SYSTEM_ID, "AutoCollapseCombat") then return end
             self._preCombatCollapsed = ObjectiveTrackerFrame.isCollapsed
-            if not ObjectiveTrackerFrame.isCollapsed and ObjectiveTrackerFrame.SetCollapsed then
+            if not ObjectiveTrackerFrame.isCollapsed then
+                self._combatCollapsing = true
                 ObjectiveTrackerFrame:SetCollapsed(true)
+                self._combatCollapsing = nil
             end
         elseif event == "PLAYER_REGEN_ENABLED" then
-            -- Restore pre-combat state
-            if self._preCombatCollapsed == false and ObjectiveTrackerFrame.SetCollapsed then
+            -- Always undo the combat auto-collapse (even if the setting was toggled off mid-combat) so it can never strand collapsed; _combatCollapsing keeps this transient toggle out of the saved layout.
+            if self._preCombatCollapsed == false then
+                self._combatCollapsing = true
                 ObjectiveTrackerFrame:SetCollapsed(false)
+                self._combatCollapsing = nil
             end
             self._preCombatCollapsed = nil
         end

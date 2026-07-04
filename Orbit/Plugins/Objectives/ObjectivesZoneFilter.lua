@@ -20,7 +20,7 @@ local CONTINENT = Enum.UIMapType and Enum.UIMapType.Continent
 local ZONE = Enum.UIMapType and Enum.UIMapType.Zone
 local MAX_WQ_WATCHES_MANUAL = Constants.QuestWatchConsts.MAX_WORLD_QUEST_WATCHES_MANUAL
 
--- Zone change can fire ZONE_CHANGED (sub-area) without ZONE_CHANGED_NEW_AREA, so listen to both; quest events re-assert after accept/turn-in/abandon and after any watch change (autoQuestWatch re-adds out-of-zone quests, which we then drop).
+-- Zone change can fire ZONE_CHANGED (sub-area) without ZONE_CHANGED_NEW_AREA, so listen to both; quest events re-assert after accept/turn-in/abandon and after any watch change (autoQuestWatch re-adds out-of-zone quests, which we then drop). QUEST_LOG_UPDATE catches world-quest POI data streaming in after a zone-in/reload (GetQuestsOnMap is empty until then).
 local ZONE_FILTER_EVENTS = {
     "PLAYER_ENTERING_WORLD",
     "ZONE_CHANGED_NEW_AREA",
@@ -30,6 +30,7 @@ local ZONE_FILTER_EVENTS = {
     "QUEST_TURNED_IN",
     "QUEST_REMOVED",
     "QUEST_WATCH_LIST_CHANGED",
+    "QUEST_LOG_UPDATE",
 }
 
 -- The player's current map plus its ancestors up to (and including) stopType: Continent for the quest filter (continent-wide quests show across the continent), Zone for world quests (tight — only the current zone, so an adjacent/child area like Zul'Aman never bleeds into Eversong Woods). A quest matches when its GetQuestUiMapID is in this set; sibling zones are always excluded.
@@ -46,6 +47,18 @@ local function BuildZoneMapSet(stopType)
     return set
 end
 
+-- Zone-level map ID for the player's position — walks past micro-dungeons/orphan maps to the enclosing zone so entering a building doesn't count as leaving. Scopes the untrack-suppression set.
+local function GetZoneKey()
+    local mapID = C_Map.GetBestMapForUnit("player")
+    while mapID and mapID ~= 0 do
+        local info = C_Map.GetMapInfo(mapID)
+        if not info then return mapID end
+        if info.mapType and info.mapType <= ZONE then return mapID end
+        mapID = info.parentMapID
+    end
+    return mapID
+end
+
 -- [ EVALUATE ]---------------------------------------------------------------------------------------
 -- Walk the quest log once: track current-zone quests, untrack other-zone quests. `AddQuestWatch` can't set the watch type (only the World-Quest variant takes one), so quests we add read back as Manual and are indistinguishable from real pins by type alone — we instead flag every quest we manage in `_zoneAutoTracked`, and only ever untrack those (plus engine-Automatic watches). Genuine manual pins, the super-tracked quest, complete/turn-in-ready quests, and zoneless/account quests are never removed.
 function Plugin:EvaluateZoneFilter()
@@ -57,7 +70,18 @@ function Plugin:EvaluateZoneFilter()
 
     local tracked = self._zoneAutoTracked
     local removed = self._zoneAutoRemoved
+    local suppressed = self._zoneAutoSuppressed
+    local seenPrev = self._zoneSeenWatched
+    local seenNow = {}
     local superID = C_SuperTrack.GetSuperTrackedQuestID()
+
+    -- Suppression is scoped to the current zone: leaving and returning re-tracks what the user untracked here. seenPrev (last pass's in-zone watched quests) resets with it, so a fresh zone auto-tracks from scratch.
+    local zoneKey = GetZoneKey()
+    if self._zoneFilterState.suppressKey ~= zoneKey then
+        wipe(suppressed)
+        seenPrev = nil
+        self._zoneFilterState.suppressKey = zoneKey
+    end
 
     -- Guard our own AddQuestWatch/RemoveQuestWatch — each fires QUEST_WATCH_LIST_CHANGED, which would otherwise re-enter.
     self._zoneFilterUpdating = true
@@ -74,10 +98,19 @@ function Plugin:EvaluateZoneFilter()
                 local watched = watchType ~= nil
 
                 if inZone then
-                    if not watched then
-                        if C_QuestLog.AddQuestWatch(questID) then tracked[questID] = true end
-                    elseif watchType == WATCH_AUTOMATIC then
+                    if watched then
+                        if watchType == WATCH_AUTOMATIC then tracked[questID] = true end
+                        suppressed[questID] = nil
+                        seenNow[questID] = true
+                    elseif suppressed[questID] then
+                        -- user untracked it here; stay off until they leave and return to the zone
+                    elseif seenPrev and seenPrev[questID] then
+                        -- watched last pass, now unwatched, and we never untrack in-zone — so the user did. Suppress the re-add (covers both auto-tracked quests and the user's own manual pins).
+                        suppressed[questID] = true
+                        tracked[questID] = nil
+                    elseif C_QuestLog.AddQuestWatch(questID) then
                         tracked[questID] = true
+                        seenNow[questID] = true
                     end
                     removed[questID] = nil
                 elseif watched and (tracked[questID] or watchType == WATCH_AUTOMATIC)
@@ -98,7 +131,11 @@ function Plugin:EvaluateZoneFilter()
     for questID in pairs(removed) do
         if not C_QuestLog.GetLogIndexForQuestID(questID) then removed[questID] = nil end
     end
+    for questID in pairs(suppressed) do
+        if not C_QuestLog.GetLogIndexForQuestID(questID) then suppressed[questID] = nil end
+    end
 
+    self._zoneSeenWatched = seenNow
     self._zoneFilterUpdating = false
 end
 
@@ -113,16 +150,26 @@ local function CountManualWorldQuestWatches()
     return count
 end
 
--- Auto-track every world quest on the current map, untrack the ones we added that left the area. World quests are a separate watch list: AddWorldQuestWatch DOES take a type, but Automatic watches are engine-capped (only a few survive), so we add as Manual to keep them all and flag them in _zoneAutoTrackedWQ — user-pinned world quests (watched, never flagged by us) are left alone. Manual watches are client-capped too: a 6th Manual add evicts the oldest (user pins included) and each eviction re-triggers QUEST_WATCH_LIST_CHANGED churn, so removals run first and adds stop at the cap.
+-- Auto-track in-area world quests as Manual watches (Automatic is engine-capped), flagging ours in _zoneAutoTrackedWQ; user pins (watched, never flagged) are left alone, and adds stop at the 5-slot Manual cap so a 6th never evicts a pin. A WQ the player untracks in-area is suppressed per-zone — detected by a Manual watch going away between passes (Automatic proximity expiry is ignored) — and not re-added until they leave/return or re-track it.
 function Plugin:EvaluateWorldQuestZone()
     if not self._zoneWQEnabled then return end
     if self._zoneFilterUpdating then return end
     local mapID = C_Map.GetBestMapForUnit("player")
     if not mapID then return end
 
-    -- GetQuestsOnMap can return world quests from adjacent/child areas (e.g. Zul'Aman bleeding into Eversong Woods), so confirm each WQ's own zone (GetQuestUiMapID) is the current zone — a zone-level set, never the continent.
+    -- GetQuestsOnMap can return world quests from adjacent/child areas (e.g. Zul'Aman bleeding into Eversong Woods), so confirm each WQ's own zone is the current zone. Use C_TaskQuest.GetQuestZoneID — GetQuestUiMapID returns 0 for world quests, which rejected every one. Zone-level set, never the continent.
     local zoneMaps = BuildZoneMapSet(ZONE)
     local trackedWQ = self._zoneAutoTrackedWQ
+    local suppressedWQ = self._zoneAutoSuppressedWQ
+
+    -- Dismiss-suppression scoped to the current zone: a WQ the player untracks stays off until they leave and return (or manually re-track it). seenPrevWQ (in-area Manual watches last pass) resets with it.
+    local zoneKey = GetZoneKey()
+    if zoneKey and zoneKey ~= 0 and self._zoneFilterState.suppressKeyWQ ~= zoneKey then
+        wipe(suppressedWQ)
+        self._zoneSeenWatchedWQ = nil
+        self._zoneFilterState.suppressKeyWQ = zoneKey
+    end
+
     self._zoneFilterUpdating = true
 
     local inArea = {}
@@ -130,41 +177,57 @@ function Plugin:EvaluateWorldQuestZone()
     if tasks then
         for _, poi in ipairs(tasks) do
             local questID = poi.questID
-            if questID and C_QuestLog.IsWorldQuest(questID) and zoneMaps[GetQuestUiMapID(questID) or 0] then
+            if questID and C_QuestLog.IsWorldQuest(questID) and zoneMaps[C_TaskQuest.GetQuestZoneID(questID) or 0] then
                 inArea[questID] = true
             end
         end
     end
 
-    for questID in pairs(trackedWQ) do
-        if not inArea[questID] then
-            C_QuestLog.RemoveWorldQuestWatch(questID)
-            trackedWQ[questID] = nil
-        end
-    end
-
-    local manualCount = CountManualWorldQuestWatches()
+    -- Only reconcile when we actually have task data: GetQuestsOnMap returns nil transiently (post-login/zone-in before POIs stream), and treating that as "area is empty" would un-watch every tracked WQ. QUEST_LOG_UPDATE re-drives once data arrives.
     if tasks then
-        for _, poi in ipairs(tasks) do
-            if manualCount >= MAX_WQ_WATCHES_MANUAL then break end
-            local questID = poi.questID
-            if inArea[questID] and C_QuestLog.GetQuestWatchType(questID) == nil
-                and C_QuestLog.AddWorldQuestWatch(questID, WATCH_MANUAL) then
+        for questID in pairs(trackedWQ) do
+            if not inArea[questID] then
+                C_QuestLog.RemoveWorldQuestWatch(questID)
+                trackedWQ[questID] = nil
+            end
+        end
+
+        local seenPrevWQ = self._zoneSeenWatchedWQ
+        local seenNowWQ = {}
+        local manualCount = CountManualWorldQuestWatches()
+        for questID in pairs(inArea) do
+            local watchType = C_QuestLog.GetQuestWatchType(questID)
+            if watchType == WATCH_MANUAL then
+                -- Manually watched (our add or the player's own pin) — record it so a later un-watch reads as a dismiss.
+                suppressedWQ[questID] = nil
+                seenNowWQ[questID] = true
+            elseif watchType ~= nil then
+                -- Blizzard's Automatic proximity watch manages its own show/hide; leave it be (and don't treat its expiry as a dismiss).
+            elseif suppressedWQ[questID] then
+                -- dismissed here; stay off until zone change or manual re-track
+            elseif seenPrevWQ and seenPrevWQ[questID] then
+                -- Manually watched last pass, now unwatched, and we never untrack in-area — so the player dismissed it.
+                suppressedWQ[questID] = true
+                trackedWQ[questID] = nil
+            elseif manualCount < MAX_WQ_WATCHES_MANUAL and C_QuestLog.AddWorldQuestWatch(questID, WATCH_MANUAL) then
                 trackedWQ[questID] = true
+                seenNowWQ[questID] = true
                 manualCount = manualCount + 1
             end
         end
+        self._zoneSeenWatchedWQ = seenNowWQ
     end
 
     self._zoneFilterUpdating = false
 end
 
--- Coalesce a burst of events into one evaluation on the next frame; ignore the watch-list events our own pass generates.
+-- Coalesce a burst of events into one next-frame pass. The pass clears _zoneFilterUpdating up front (a fresh frame is never nested in a pass), so an error mid-pass can't strand the guard true and permanently block the filter — it self-heals on the next event. Self-generated watch events just schedule one more idempotent pass, which converges.
 function Plugin:ScheduleZoneFilterUpdate()
-    if self._zoneFilterUpdating or self._zoneFilterPending then return end
+    if self._zoneFilterPending then return end
     self._zoneFilterPending = true
     RunNextFrame(function()
         self._zoneFilterPending = false
+        self._zoneFilterUpdating = false
         self:EvaluateZoneFilter()
         self:EvaluateWorldQuestZone()
     end)
@@ -181,18 +244,22 @@ function Plugin:RestoreZoneFilter()
     end
     wipe(removed)
     wipe(self._zoneAutoTracked)
+    wipe(self._zoneAutoSuppressed)
+    self._zoneFilterState.suppressKey = nil
+    self._zoneSeenWatched = nil
     self._zoneFilterUpdating = false
 end
 
 -- Untrack the world quests the tracker added — the set persists, so prior sessions' adds are cleaned up too (the WQ tracker is additive; turning it off removes what it added).
 function Plugin:RemoveAutoTrackedWorldQuests()
-    local trackedWQ = self._zoneAutoTrackedWQ
-    if not trackedWQ or not next(trackedWQ) then return end
     self._zoneFilterUpdating = true
-    for questID in pairs(trackedWQ) do
+    for questID in pairs(self._zoneAutoTrackedWQ) do
         C_QuestLog.RemoveWorldQuestWatch(questID)
     end
-    wipe(trackedWQ)
+    wipe(self._zoneAutoTrackedWQ)
+    wipe(self._zoneAutoSuppressedWQ)
+    self._zoneFilterState.suppressKeyWQ = nil
+    self._zoneSeenWatchedWQ = nil
     self._zoneFilterUpdating = false
 end
 
@@ -203,12 +270,21 @@ function Plugin:UpdateZoneFilters()
         -- The shadow sets are char-persisted (rooted in OrbitDB, mutated in place): across /reload the filter must still know which watches it removed and which Manual WQ watches are its own — those read back identically to user pins.
         local state = self:GetCharData("ZoneFilterState")
         if not state then
-            state = { tracked = {}, removed = {}, trackedWQ = {} }
+            state = { tracked = {}, removed = {}, trackedWQ = {}, suppressed = {}, suppressedWQ = {} }
             self:SetCharData("ZoneFilterState", state)
         end
+        -- Backfill any field a state persisted by an older version predates, so the pairs() loops never hit nil.
+        state.tracked = state.tracked or {}
+        state.removed = state.removed or {}
+        state.trackedWQ = state.trackedWQ or {}
+        state.suppressed = state.suppressed or {}
+        state.suppressedWQ = state.suppressedWQ or {}
         self._zoneAutoTracked = state.tracked
         self._zoneAutoRemoved = state.removed
         self._zoneAutoTrackedWQ = state.trackedWQ
+        self._zoneAutoSuppressed = state.suppressed
+        self._zoneAutoSuppressedWQ = state.suppressedWQ
+        self._zoneFilterState = state
         self._zoneFilterFrame = CreateFrame("Frame")
         self._zoneFilterFrame:SetScript("OnEvent", function() self:ScheduleZoneFilterUpdate() end)
     end
@@ -234,6 +310,6 @@ function Plugin:UpdateZoneFilters()
         frame:UnregisterAllEvents()
     end
 
-    if filterTurnedOn then self:EvaluateZoneFilter() end
-    if wqTurnedOn then self:EvaluateWorldQuestZone() end
+    -- Route the turn-on evaluation through the scheduler (deferred one frame) so it shares the self-healing guard reset; a direct call here could strand _zoneFilterUpdating if it errored.
+    if filterTurnedOn or wqTurnedOn then self:ScheduleZoneFilterUpdate() end
 end

@@ -57,7 +57,6 @@ Orbit.ObjectivesConstants = {
     HIGHLIGHT_BRIGHTEN = 1.3,
     DEFERRED_RESKIN_DELAY = 0.5,
     POI_SIZE = 18,
-    MAX_QUESTS = 35,
     TITLE_COLOR_DEFAULT     = { r = 1.00, g = 0.82, b = 0.00, a = 1 },
     COMPLETED_COLOR_DEFAULT = { r = 0.90, g = 0.80, b = 0.10, a = 1 },
     FOCUS_COLOR_DEFAULT     = { r = 1.00, g = 1.00, b = 1.00, a = 1 },

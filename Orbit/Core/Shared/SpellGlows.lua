@@ -190,7 +190,11 @@ function SpellGlows:OpenMenu(anchor, opts)
     local glowTypes = BuildGlowTypeList()
     local sounds = BuildSoundList()
     openMenu = MenuUtil.CreateContextMenu(anchor, function(_, root)
-        local name = opts.id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(opts.id)
+        local name
+        if opts.id then
+            if opts.itemType == "item" then name = C_Item.GetItemNameByID(opts.id)
+            else name = C_Spell.GetSpellName(opts.id) end
+        end
         root:CreateTitle(name or "")
         for _, cond in ipairs(CONDITION_ORDER) do
             if capable[cond] and (not supported or supported[cond]) then

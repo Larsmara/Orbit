@@ -192,6 +192,16 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "HeaderSeparators"),
         })
 
+        -- Show Quest Count
+        table.insert(schema.controls, {
+            type = "checkbox",
+            key = "ShowQuestCount",
+            label = L.PLU_OBJ_SHOW_QUEST_COUNT,
+            default = true,
+            visibleIf = OrbitStyleVisible,
+            onChange = OnChange(self, systemIndex, "ShowQuestCount"),
+        })
+
         -- Auto-Collapse in Combat
         table.insert(schema.controls, {
             type = "checkbox",
@@ -219,16 +229,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             tooltip = L.PLU_OBJ_ZONE_WQ_TT,
             default = false,
             onChange = OnChange(self, systemIndex, "ZoneWorldQuests"),
-        })
-
-        -- Show Quest Count
-        table.insert(schema.controls, {
-            type = "checkbox",
-            key = "ShowQuestCount",
-            label = L.PLU_OBJ_SHOW_QUEST_COUNT,
-            default = true,
-            visibleIf = OrbitStyleVisible,
-            onChange = OnChange(self, systemIndex, "ShowQuestCount"),
         })
 
     elseif currentTab == L.PLU_OBJ_TAB_COLOURS then
