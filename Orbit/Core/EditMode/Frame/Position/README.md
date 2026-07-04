@@ -1,83 +1,36 @@
-# position
+# Position
 
-anchor graph, cross-axis size sync, persistence, and pixel utilities for orbit frames. axis-parameterized: one implementation handles both orientations.
+## Description
+The anchor graph, cross-axis size sync, position persistence, and position math for Orbit frames. Axis-parameterized: one implementation handles both orientations.
 
-## files
+## Purpose
+Owns where every movable Orbit frame lives and how anchored chains stay coherent across reloads, spec swaps, and profile switches. Orientation is a first-class primitive so anchor/sync code never forks into horizontal and vertical copies.
 
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| Axis.lua | first-class `horizontal` / `vertical` axis primitives (edges, accessors, row-dim field, independent-flag name, sync-flag name). `Axis.ForEdge` / `Axis.SyncEnabled` helpers. exposed as `OrbitEngine.Axis`. |
-| AnchorGraph.lua | pure-data directed graph: virtual / disabled state, cycle detection, targeted reconciliation. |
-| Anchor.lua | physical + logical anchor graph, parent→child cross-axis size sync, merge-border state. |
-| Persistence.lua | position / anchor save+restore to saved variables; pending queue for load-order races; per-spec routing. |
-| PositionUtils.lua | position math helpers (offset calculation, bounds, scale-relative icon offsets via `baseSize`). |
+| Axis.lua | `Engine.Axis.horizontal/vertical` primitives (edges, size/coord accessors, `rowDim`, `independentFlag`, `syncFlag`, `perpendicular`) + `Axis.ForEdge` / `Axis.SyncEnabled` |
+| AnchorGraph.lua | pure-data directed graph: virtual/disabled state, cycle detection, targeted reconciliation |
+| Anchor.lua | physical + logical anchor graphs, parent→child cross-axis size sync, merge-border state |
+| Persistence.lua | save/restore to SavedVariables, pending queue for load-order races, per-spec routing |
+| PositionUtils.lua | offset/bounds math, scale-relative icon text offsets via `baseSize` |
 
-## axis model
+`CreateAnchor` / `SyncChild` / `ApplyAnchorPosition` / `BreakAnchor` derive the axis from the anchor edge via `Axis.ForEdge(edge)` and use `axis.perpendicular` for cross-axis sync — one code path, axis flows through. The graph is strictly one-directional: the parent is the source of truth; a frame is influenced only by its immediate parent (if anchored) or its own saved settings (if a root). No chain-walking, no extent aggregation, siblings never see each other.
 
-the engine treats orientation as a first-class domain primitive. anchor / sync operations are one implementation parameterized by an axis table:
+Sync flags (per frame, per axis): `frame.orbitWidthSync` syncs width from the direct parent when T/B-anchored; `frame.orbitHeightSync` syncs height when L/R-anchored. `Axis.SyncEnabled(frame, axis)` is the single resolver. Opt-outs: `independentWidth` / `independentHeight` anchor options block an otherwise-active sync.
 
-```lua
-Engine.Axis.horizontal = {
-    edges           = { LEFT = true, RIGHT = true },
-    forward         = "RIGHT",        -- direction of increasing coord
-    backward        = "LEFT",
-    getSize         = GetWidth, setSize = SetWidth,
-    getMin          = GetLeft,  getMax  = GetRight,
-    minSize         = 10,
-    rowDim          = "orbitColumnWidth",
-    independentFlag = "independentWidth",
-    syncFlag        = "orbitWidthSync",
-    perpendicular   = Engine.Axis.vertical,
-}
-```
+Load order (`EditFrame.xml`): Guard → PositionUtils → Axis → AnchorGraph → Anchor (runs `Graph:Init()`) → Persistence. Axis must load first — AnchorGraph/Anchor import `Engine.Axis` at file scope.
 
-`Engine.Axis.vertical` mirrors with `{TOP, BOTTOM}`, height accessors, `orbitRowHeight`, `independentHeight`, `orbitHeightSync`. the Axis namespace is public (`OrbitEngine.Axis`) — plugins can use it in their own layout code instead of hardcoding `SetWidth` / `SetHeight`.
+## Gotchas
+- Never branch on hardcoded `LEFT`/`RIGHT`/`TOP`/`BOTTOM` in axis-aware code — use `axis.edges[edge]` / `axis.forward` / `axis.backward`. New axis-dependent behavior goes in the Axis table, not as a branch in a consumer.
+- Sync is **immediate parent only**, by design. Two L/R-anchored siblings both flagged `orbitWidthSync` do not form a width chain that leaks into their own T/B children — each child reads its direct parent. Do not add extent aggregation.
+- Preserved legacy quirk: when an independent flag is set AND `suppressApplySettings` is false, the engine still syncs the cross-axis size and writes the result back to the plugin's saved `Height`/`Width` setting — UnitFrames use it to normalize height when chaining live. Extended symmetrically to `independentWidth` → `Width`. Don't "fix" it.
+- Cycle detection runs through `Graph:WouldCreateCycle` before any `CreateAnchor` — pure-data, never geometry reads.
+- Attaching or detaching a child never moves the parent.
+- The logical/physical graph split, rescue check, pending-anchor queue, and per-spec routing are documented in `../../README.md` — read that before touching Anchor.lua or Persistence.lua semantics.
 
-### how axis flows through anchor code
+## Secrets
+`Anchor.lua` guards child alpha with `issecretvalue` before the merge-border visibility comparison (OOC-fade alpha can be curve-driven). Frame geometry of Orbit-owned frames is never secret.
 
-`CreateAnchor` / `SyncChild` / `ApplyAnchorPosition` / `BreakAnchor` all derive the axis from the anchor's edge via `Axis.ForEdge(edge)` and use `edgeAxis.perpendicular` for cross-axis size sync. there is no "horizontal path" and "vertical path" — one code path, axis flows through.
-
-**the anchor graph is strictly one-directional: the parent is the source of truth, the child is positioned relative to it.** no chain-walking, no extent aggregation, no visual-center rebalance. a frame's dimensions and position are influenced only by its immediate parent (if anchored) or its own saved settings (if a root). siblings do not see each other through the engine.
-
-## sync flags
-
-two independent boolean frame fields control whether a frame's size syncs from its anchor parent:
-
-| flag | effect |
-|---|---|
-| `frame.orbitWidthSync = true`  | when T/B-anchored, child.width syncs to the **direct** parent's width |
-| `frame.orbitHeightSync = true` | when L/R-anchored, child.height syncs to the **direct** parent's height |
-
-both can be set independently. `Axis.SyncEnabled(frame, axis)` reads `frame[axis.syncFlag]` — the single resolver every sync check routes through.
-
-the sync is **immediate parent only**. no chain extent, no combined widths, no propagation across siblings. if PlayerFrame and a cooldown viewer are L/R-anchored and both have `orbitWidthSync`, they don't form a width-chain that leaks into their T/B children — each child still reads its own direct parent's size.
-
-## cross-axis size opt-outs
-
-two symmetric anchor options that block an otherwise-active sync:
-
-| flag | effect |
-|---|---|
-| `independentHeight` | L/R-anchored child with `orbitHeightSync=true` keeps its own height (blocks height sync from parent) |
-| `independentWidth`  | T/B-anchored child with `orbitWidthSync=true` keeps its own width (blocks width sync from parent) |
-
-preserved legacy quirk: when the independent flag is set AND `suppressApplySettings` is false, the engine DOES sync cross-axis size AND records the result back to the plugin's saved `Height` / `Width` setting. used by UnitFrames to "normalize" height when chaining live. extended symmetrically to `independentWidth` → `Width` setting.
-
-## load order
-
-from `EditFrame.xml`:
-
-1. `Guard.lua` (combat safety)
-2. `Position/PositionUtils.lua`
-3. `Position/Axis.lua` — must load before AnchorGraph / Anchor since they import `Engine.Axis` at file scope
-4. `Position/AnchorGraph.lua`
-5. `Position/Anchor.lua` — initializes graph via `Graph:Init()`
-6. `Position/Persistence.lua`
-
-## rules
-
-- axis-aware code must never branch on hardcoded `LEFT`/`RIGHT`/`TOP`/`BOTTOM` — always `axis.edges[edge]` / `axis.forward` / `axis.backward`.
-- new axis-dependent behavior goes in the Axis table, not as a branch in a consumer.
-- cycle detection runs through `Graph:WouldCreateCycle` before any `CreateAnchor`.
-- parent frames are authoritative: attaching or detaching a child never moves the parent.
-- opt into cross-axis size sync per axis: `frame.orbitWidthSync = true` and/or `frame.orbitHeightSync = true`. each flag only affects sync FROM the frame's own direct parent — siblings never propagate size.
+## References
+`../../README.md` (anchor graph semantics, persistence flows) · `../Selection/README.md` (drag → persistence handoff) · skills: `/pixel` (all offsets go through `Pixel:Snap`), `/wow-frames`.

@@ -174,18 +174,29 @@ function Plugin:ReparentAll()
     end, { enforceShow = true })
 
     if not BagsBar._orbitLayoutHooked and BagsBar.Layout then
-        hooksecurefunc(BagsBar, "Layout", function(f)
+        hooksecurefunc(BagsBar, "Layout", function()
             C_Timer.After(0, function()
-                if self.frame and f:IsShown() then
-                    local w, h = f:GetSize()
-                    if w and h and w > 0 and h > 0 then
-                        local s = self.frame:GetEffectiveScale()
-                        self.frame:SetSize(OrbitEngine.Pixel:Snap(w, s), OrbitEngine.Pixel:Snap(h, s))
-                    end
-                end
+                self:SyncSize()
             end)
         end)
         BagsBar._orbitLayoutHooked = true
+    end
+end
+
+-- Resize the container to BagsBar's content bounds. Guarded: the container parents the secure BagsBar, so SetSize is protected in combat.
+function Plugin:SyncSize()
+    local frame = self.frame
+    if not frame or not BagsBar or not BagsBar:IsShown() then return end
+    if InCombatLockdown() then
+        Orbit.CombatManager:QueueUpdate(function()
+            self:SyncSize()
+        end)
+        return
+    end
+    local w, h = BagsBar:GetSize()
+    if w and h and w > 0 and h > 0 then
+        local s = frame:GetEffectiveScale()
+        frame:SetSize(OrbitEngine.Pixel:Snap(w, s), OrbitEngine.Pixel:Snap(h, s))
     end
 end
 
@@ -211,11 +222,7 @@ function Plugin:ApplySettings()
         self:ApplyOrientation(BagsBar, orientation, Enum.BagsOrientation.Horizontal)
         BagsBar.direction = direction
         self:TriggerLayout(BagsBar)
-        local w, h = BagsBar:GetSize()
-        if w and h and w > 0 and h > 0 then
-            local s = frame:GetEffectiveScale()
-            frame:SetSize(OrbitEngine.Pixel:Snap(w, s), OrbitEngine.Pixel:Snap(h, s))
-        end
+        self:SyncSize()
     end
 
     self:ApplyMouseOver(frame, SYSTEM_ID)

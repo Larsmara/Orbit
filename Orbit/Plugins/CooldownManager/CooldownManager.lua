@@ -101,6 +101,7 @@ function Plugin:IsComponentDisabled()
     return false
 end
 function Plugin:HookProcGlow() end
+function Plugin:HookNativeGlowMenu() end
 function Plugin:CheckPandemicFrames() end
 function Plugin:MarkPandemicDirty() end
 function Plugin:FixGlowTransparency() end
@@ -204,15 +205,13 @@ function Plugin:OnLoad()
         local fontPath = buffBarPlugin:GetGlobalFont()
         local textSize = 8
         local name = preview:CreateFontString(nil, "OVERLAY", "GameFontHighlight", 7)
-        name:SetFont(fontPath, textSize, Orbit.Skin:GetFontOutline())
-        Orbit.Skin:ApplyFontShadow(name)
+        Orbit.Skin:SetFontWithShadow(name, fontPath, textSize)
         name:SetPoint("LEFT", preview, "LEFT", 5, 0)
         name:SetText(L.PLU_COOLDOWN_PREVIEW_BUFF)
         name:SetTextColor(1, 1, 1, 1)
 
         local timer = preview:CreateFontString(nil, "OVERLAY", "GameFontHighlight", 7)
-        timer:SetFont(fontPath, textSize, Orbit.Skin:GetFontOutline())
-        Orbit.Skin:ApplyFontShadow(timer)
+        Orbit.Skin:SetFontWithShadow(timer, fontPath, textSize)
         timer:SetPoint("RIGHT", preview, "RIGHT", -5, 0)
         timer:SetText("12.4")
         timer:SetTextColor(1, 1, 1, 1)

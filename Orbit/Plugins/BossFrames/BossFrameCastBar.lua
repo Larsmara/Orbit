@@ -92,12 +92,12 @@ function CB:Create(parent, bossIndex, plugin)
     container.Text = textOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     container.Text:SetPoint("LEFT", bar, "LEFT", 4, 0)
     container.Text:SetJustifyH("LEFT")
-    Orbit.Skin:ApplyFontShadow(container.Text)
+    Orbit.Skin:SetFontWithShadow(container.Text, container.Text:GetFont())
 
     container.Timer = textOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     container.Timer:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
     container.Timer:SetJustifyH("RIGHT")
-    Orbit.Skin:ApplyFontShadow(container.Timer)
+    Orbit.Skin:SetFontWithShadow(container.Timer, container.Timer:GetFont())
 
     container.Bar = bar
     container.protectedOverlay = bar.protectedOverlay

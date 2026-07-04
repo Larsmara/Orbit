@@ -1,33 +1,27 @@
-# menu items
+# MenuItems
 
-native blizzard ui bar plugins: micro menu, bag bar, and queue status.
+## Description
+Plugins for Blizzard's native utility bars: micro menu, bag bar, and queue status indicator.
 
-## purpose
+## Purpose
+Captures Blizzard's native buttons into Orbit containers so they gain Orbit positioning, scaling, and fade behavior without reimplementing the buttons themselves. All three mix in `Orbit.NativeBarMixin` (Core/Plugin) for shared scale, capture, and mouseover-fade helpers.
 
-captures and reskins blizzard's native utility bars. uses `NativeBarMixin` from core/plugin for shared scale, layout, and interaction behavior.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| MicroMenu.lua | micro menu bar (character, spellbook, talents, etc.). captures native buttons. |
-| BagBar.lua | bag slot bar. captures native bag buttons. |
-| QueueStatus.lua | dungeon/battleground queue status indicator. |
+| MicroMenu.lua | `Orbit_MicroMenu` ("Menu Bar") — captures micro menu buttons; Scale/Padding/Rows layout |
+| BagBar.lua | `Orbit_BagBar` — captures bag slot buttons; Scale/Orientation/Direction |
+| QueueStatus.lua | `Orbit_QueueStatus` — repositions the queue status eye |
 
-## adding a new menu item plugin
+MicroMenu captures the children of Blizzard's `MicroMenu` via `NativeBarMixin:CaptureFromNativeParent` at load and hooks `MicroMenu.AddButton` with `hooksecurefunc` to capture buttons Blizzard adds later. QueueStatus stubs out `MicroMenuMixin.UpdateQueueStatusAnchors` so Blizzard stops re-anchoring the eye. All three follow the standard plugin flow: `defaults` in `RegisterPlugin`, position via `OrbitEngine.Frame:AttachSettingsListener`/`RestorePosition`, opacity via `OOCFadeMixin` and `ApplyMouseOver`.
 
-1. create a new lua file in this directory
-2. register via `Orbit:RegisterPlugin("New Item", SYSTEM_ID, { defaults = { ... }, OnLoad = function(self) ... end })`
-3. use `NativeBarMixin` if capturing native blizzard buttons
-4. declare plugin schema defaults inline in the `defaults = { ... }` block of the options table passed to `RegisterPlugin`. Do not edit `DefaultProfile.lua` — that file is a saved-layout snapshot owned by ProfileManager, not the plugin-schema default site.
-5. add the new file to `Plugins/MenuItems/MenuItems.xml` as a `<Script file="NewFile.lua"/>` entry; ensure it loads after its dependencies
+## Gotchas
+- Button capture must null-check before reparenting — some buttons don't exist in all game modes. `CaptureFromNativeParent` bails and sets `self.conflicted` when another addon has already claimed the native container.
+- Hover fade uses the implicit hover pattern — `Orbit.Animation:ApplyHoverFade` polls `MouseIsOver` geometry on a throttled `OnUpdate` — not native mouse enter/leave events, so it works across captured children without per-button scripts.
+- QueueStatus sets its Edit Mode frame level to 50 (selection renders at level+100) so its selection overlay beats the minimap's.
+- `Performance` and `CombatTimer` moved to the Datatexts plugin as free-floating datatexts — don't rebuild them here.
 
-## rules
-
-- all native bar plugins must use `NativeBarMixin` for consistent behavior
-- button capture must null-check before reparenting (some buttons may not exist in all game modes)
-- hover fade uses the implicit hover pattern (geometry polling), not wow's native mouse events
-
-## migration note
-
-`Performance` and `CombatTimer` were moved to the Datatexts plugin in `Plugins/Datatexts/` as richer, free-floating datatexts with sparkline graphs and encounter tracking. see `Plugins/Datatexts/README.md`.
+## References
+- `Core/Plugin/NativeBarMixin.lua` — capture, scale, and mouseover helpers all three plugins rely on.
+- `Plugins/Datatexts/README.md` — destination of the migrated datatexts.
+- Skills: `/wow-frames`.

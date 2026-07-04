@@ -170,8 +170,7 @@ function Orbit.GroupFrameLayoutMixin:UpdateGroupLabels(sortMode, groupOrder, wid
             self.groupLabels[idx]:SetTextColor(1, 1, 1, GROUP_LABEL_ALPHA)
         end
         local label = self.groupLabels[idx]
-        label:SetFont(fontPath, GROUP_LABEL_FONT_SIZE, "OUTLINE")
-        Orbit.Skin:ApplyFontShadow(label)
+        Orbit.Skin:SetFontWithShadow(label, fontPath, GROUP_LABEL_FONT_SIZE, "OUTLINE")
         label:SetText("G" .. groupNum)
         label:ClearAllPoints()
 

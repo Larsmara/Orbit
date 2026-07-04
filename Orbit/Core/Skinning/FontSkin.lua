@@ -27,6 +27,22 @@ function Skin:ApplyFontShadow(fontString)
     end
 end
 
+local SHADOW_BACKING_FONT = "GameFontHighlight"
+
+-- SetFont that re-backs the FontString with a font object first, else SetShadow silently won't render after an inline SetFont (bare-fontstring trap); preserves color/justify that SetFontObject resets.
+function Skin:SetFontWithShadow(fontString, path, size, flags)
+    if not fontString or not fontString.SetFont then return end
+    local r, g, b, a = fontString:GetTextColor()
+    local jh = fontString.GetJustifyH and fontString:GetJustifyH()
+    local jv = fontString.GetJustifyV and fontString:GetJustifyV()
+    fontString:SetFontObject(SHADOW_BACKING_FONT)
+    fontString:SetFont(path, size, flags or self:GetFontOutline())
+    fontString:SetTextColor(r, g, b, a)
+    if jh then fontString:SetJustifyH(jh) end
+    if jv then fontString:SetJustifyV(jv) end
+    self:ApplyFontShadow(fontString)
+end
+
 function Skin:SkinText(fontString, settings)
     if not fontString then
         return
@@ -39,8 +55,7 @@ function Skin:SkinText(fontString, settings)
         font = LSM:Fetch("font", settings.font) or font
     end
 
-    fontString:SetFont(font, size, self:GetFontOutline())
-    self:ApplyFontShadow(fontString)
+    self:SetFontWithShadow(fontString, font, size)
 
     if settings.textColor then
         local c = settings.textColor
@@ -63,7 +78,7 @@ function Skin:ApplyUnitFrameText(fontString, alignment, fontPath, textSize)
     textSize = textSize or Constants.UI.UnitFrameTextSize
     local padding = Constants.UnitFrame.TextPadding
 
-    fontString:SetFont(fontPath, textSize, self:GetFontOutline())
+    self:SetFontWithShadow(fontString, fontPath, textSize)
     fontString:ClearAllPoints()
 
     local fsScale = fontString:GetEffectiveScale()
@@ -74,6 +89,4 @@ function Skin:ApplyUnitFrameText(fontString, alignment, fontPath, textSize)
         fontString:SetPoint("RIGHT", Engine.Pixel:Multiple(-padding, fsScale), 0)
         fontString:SetJustifyH("RIGHT")
     end
-
-    self:ApplyFontShadow(fontString)
 end

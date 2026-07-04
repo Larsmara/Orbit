@@ -18,23 +18,18 @@ local function ParseCooldownDuration(itemType, id)
     return Orbit.TooltipParser and Orbit.TooltipParser:ParseCooldownDuration(itemType, id)
 end
 
--- [ SPELL OVERRIDE ALIAS ] --------------------------------------------------------------------------
-local function GetActiveSpellID(spellID)
-    return FindSpellOverrideByID(spellID)
-end
-
 -- [ COOLDOWN VALIDATION ] ---------------------------------------------------------------------------
--- issecretvalue-guards on GetSpellBaseCooldown / C_Spell.GetSpellCharges so the comparisons never throw in combat.
+-- issecretvalue-guards on GetSpellBaseCooldown / C_Spell.GetSpellCharges so the comparisons never throw in combat; the tooltip parse is the final word for cooldowns those APIs don't report (base cd 0, secret mid-combat) and works in combat, so drops accepted out of combat stay accepted in it.
 function DragDrop:HasCooldown(itemType, id)
     if itemType == "spell" then
-        local activeId = GetActiveSpellID(id)
+        local activeId = Orbit.CooldownData:GetActiveSpellID(id)
+        if Orbit.CooldownData:IsTracked(id) or Orbit.CooldownData:IsTracked(activeId) then return true end
         local cd = GetSpellBaseCooldown(activeId)
         if cd and not issecretvalue(cd) and cd > 0 then return true end
         local ci = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(activeId)
         if ci and ci.maxCharges and not issecretvalue(ci.maxCharges) and ci.maxCharges > 1 then return true end
         return ParseCooldownDuration("spell", activeId) ~= nil
     elseif itemType == "item" then
-        if ParseCooldownDuration("item", id) ~= nil then return true end
         return GetItemSpell(id) ~= nil
     end
     return false
@@ -101,7 +96,7 @@ function DragDrop:GetCursorTexture()
     local itemType, id = self:ResolveCursorInfo()
     if not itemType then return nil end
     if itemType == "spell" then
-        local info = C_Spell.GetSpellInfo(GetActiveSpellID(id))
+        local info = C_Spell.GetSpellInfo(Orbit.CooldownData:GetActiveSpellID(id))
         return info and info.iconID
     elseif itemType == "item" then
         return C_Item.GetItemIconByID(id)
@@ -110,12 +105,21 @@ function DragDrop:GetCursorTexture()
 end
 
 -- [ SAVED-DATA BUILDERS ] ---------------------------------------------------------------------------
+-- Spells resolve through CooldownData (override -> tooltip -> aura-learnable) with the tooltip cd as fallback for base-cd-0 quirks; items are parser-sourced. One resolver so the three builders can't drift.
+local function ResolveDurations(itemType, parseId)
+    if itemType == "spell" then
+        local actDur = (Orbit.CooldownData:ResolveActiveDuration(parseId))
+        local cdDur = Orbit.CooldownData:GetBaseCooldownSeconds(parseId) or ParseCooldownDuration("spell", parseId)
+        return actDur, cdDur
+    end
+    return ParseActiveDuration(itemType, parseId), ParseCooldownDuration(itemType, parseId)
+end
+
 -- Captures durations + useSpellId + slotId so the consumer renders without a second API lookup.
 function DragDrop:BuildTrackedItemEntry(itemType, itemId, x, y)
     if not (itemType and itemId) then return nil end
-    local parseId = (itemType == "spell") and GetActiveSpellID(itemId) or itemId
-    local actDur = ParseActiveDuration(itemType, parseId)
-    local cdDur = ParseCooldownDuration(itemType, parseId)
+    local parseId = (itemType == "spell") and Orbit.CooldownData:GetActiveSpellID(itemId) or itemId
+    local actDur, cdDur = ResolveDurations(itemType, parseId)
     local useSpellId = (itemType == "item") and select(2, GetItemSpell(itemId)) or nil
     local slotId = (itemType == "item") and self:ResolveEquipmentSlot(itemId) or nil
     return {
@@ -133,10 +137,10 @@ end
 -- afterNativeIndex lets the consumer interleave injected frames with native cooldown viewer icons.
 function DragDrop:BuildInjectedItemEntry(itemType, itemId, afterNativeIndex)
     if not (itemType and itemId) then return nil end
-    local parseId = (itemType == "spell") and GetActiveSpellID(itemId) or itemId
+    local parseId = (itemType == "spell") and Orbit.CooldownData:GetActiveSpellID(itemId) or itemId
     local useSpellId = (itemType == "item") and select(2, GetItemSpell(itemId)) or nil
     local slotId = (itemType == "item") and self:ResolveEquipmentSlot(itemId) or nil
-    local activeDuration = ParseActiveDuration(itemType, parseId)
+    local activeDuration = (ResolveDurations(itemType, parseId))
     return {
         type = itemType,
         id = itemId,
@@ -150,7 +154,7 @@ end
 -- maxCharges is spell-only and captured at drop time outside combat (IsChargeSpell's secret check); items use cd-only/active+cd via TooltipParser durations.
 function DragDrop:BuildTrackedBarPayload(itemType, id)
     if not (itemType and id) then return nil end
-    local parseId = (itemType == "spell") and GetActiveSpellID(id) or id
+    local parseId = (itemType == "spell") and Orbit.CooldownData:GetActiveSpellID(id) or id
     local maxCharges
     if itemType == "spell" then
         local _, ci = self:IsChargeSpell(parseId)
@@ -158,14 +162,15 @@ function DragDrop:BuildTrackedBarPayload(itemType, id)
             maxCharges = ci.maxCharges
         end
     end
+    local actDur, cdDur = ResolveDurations(itemType, parseId)
     local useSpellId = (itemType == "item") and select(2, GetItemSpell(id)) or nil
     local slotId = (itemType == "item") and self:ResolveEquipmentSlot(id) or nil
     return {
         type = itemType,
         id = id,
         maxCharges = maxCharges,
-        activeDuration = ParseActiveDuration(itemType, parseId),
-        cooldownDuration = ParseCooldownDuration(itemType, parseId),
+        activeDuration = actDur,
+        cooldownDuration = cdDur,
         useSpellId = useSpellId,
         slotId = slotId,
     }

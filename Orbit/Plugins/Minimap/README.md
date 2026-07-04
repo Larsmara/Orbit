@@ -1,90 +1,27 @@
-# minimap
+# Minimap
 
-orbit's minimap plugin. reparents blizzard's `Minimap` into a clean, borderless orbit container and strips all default art/chrome. reparents several blizzard indicator frames (difficulty, missions, mail, crafting orders) into the container. supports **canvas mode** for fully customisable component placement.
+## Description
+Reparents Blizzard's `Minimap` render surface into a clean Orbit container, strips the default chrome, and exposes every satellite element (zone text, clock, coords, zoom, tracking, compartment drawer, reparented Blizzard indicators) as an individually positionable Canvas Mode component. Also offers an alternate full-screen HUD view (splatter mask, toggled via the `ORBIT_MINIMAP_TOGGLEVIEW` key binding).
 
-## what it does
+## Purpose
+Gives the minimap Orbit's border/backdrop system, shape choice (square / round / splatter), and free component placement — none of which Blizzard's `MinimapCluster` layout allows. Canvas Mode is the single source of truth for component visibility and position; there are no per-component settings checkboxes.
 
-- strips blizzard's compass frame, border top, zone text button, and tracking button
-- reparents the actual `Minimap` render surface into an orbit-managed frame
-- reparents blizzard's instance difficulty, expansion landing page, mail, and crafting order indicators into the overlay
-- creates custom zoom in/out buttons with hover-reveal behaviour
-- applies orbit's border system (`Orbit.Skin:SkinBorder`) and backdrop. the square shape inherits the global Border Style **and its colour** (no per-minimap `BorderColor` — that control only shows for a round shape whose Border Ring actually draws a tinted element: `blizzard` / `round` / `void`; `none` and `fadedcircle` have nothing to tint) — flat pixel and LSM edge-file borders match the square render surface exactly; a rounded global style still draws rounded border corners that the `Minimap:SetMaskTexture` render surface (a stretched flat square mask) can't follow, so its corners stay square
-- integrates with edit mode for drag/position/anchor, plus an aspect-locked drag-resize handle that drives the `Size` setting (clamped to the Size slider's 100–400 range)
-- supports visibility in pet battles / vehicles via `RegisterVisibilityEvents`
-- live-toggle support — can be disabled/enabled without a reload
+## Implementation
+`MinimapCapture.lua` captures `Minimap`/`MinimapCluster` on load: hides the cluster via `OrbitEngine.NativeFrame:Hide(cluster, { unregisterEvents = false, clearScripts = false })`, strips compass/border/zone-button/tracking art, reparents `InstanceDifficulty`, `MailFrame`, `CraftingOrderFrame`, and `ExpansionLandingPageMinimapButton` into the overlay, and installs FrameGuard so foreign code can't steal the surface. `MinimapComponents.lua` creates and updates the Orbit-authored components (Clock, Coords, ZoneText, ZoomButtons, CalendarInvites) and resolves shape/mask (`MinimapConstants.lua` — `Orbit.MinimapConstants`, single source for SYSTEM_ID, sizes, mask paths, `BORDER_RING_OPTIONS`). `MinimapCompartment.lua` collects LibDBIcon + legacy minimap buttons into a hover-reveal drawer. `Minimap.lua` orchestrates: plugin registration (`Orbit_Minimap`, `canvasMode = true`), `ApplySettings()` sizes the container, skins the border, restores canvas positions via `OrbitEngine.ComponentDrag`, applies per-component font/size/color overrides via `OrbitEngine.OverrideUtils`, and re-captures the surface if a reload left it parented elsewhere. `MinimapSettings.lua` builds the settings UI.
 
-## file structure
+Defaults carry per-component `ComponentPositions` and `DisabledComponents`; click actions (left/middle/right) are configurable, plus `View`/`Hud_*` keys for the HUD view.
 
-| file                     | responsibility                                                    |
-| ------------------------ | ----------------------------------------------------------------- |
-| `Minimap.lua`            | plugin registration, lifecycle orchestration, ApplySettings entry, event fan-out |
-| `MinimapConstants.lua`   | `Orbit.MinimapConstants` — single source of truth for SYSTEM_ID, size/zoom defaults, mask textures, border-ring options |
-| `MinimapCapture.lua`     | blizzard `Minimap`/`MinimapCluster` capture, art stripping, FrameGuard, reparenting of difficulty/missions/mail/crafting indicators |
-| `MinimapComponents.lua`  | per-component creators + updaters (Clock, Coords, ZoomButtons, ZoneText, CalendarInvites) and shape/mask resolution |
-| `MinimapCompartment.lua` | compartment button, flyout, button collection, hover orchestrator |
-| `MinimapSettings.lua`    | settings UI (sliders)                                             |
+## Gotchas
+- FarmHud compatibility is deliberate and load-bearing: on FarmHud show, `FrameGuard:Suspend` releases the SetParent snap-back so FarmHud may own the surface; `_farmHudActive` gates the surface sync and the recapture check inside `ApplySettings` (mount/shapeshift visibility events would otherwise fight FarmHud's layout). `RegisterForeignAddOnObject` tells FarmHud about our container. FarmHud may load after Orbit — the hook is deferred.
+- The compartment anchors to our container, not the `Minimap` surface — FarmHud reparents the surface away from our frame.
+- The square shape inherits the global Border Style and its colour; the per-minimap `BorderColor` control only appears for round shapes whose Border Ring draws a tinted element (`blizzard` / `round` / `void`). A rounded global border style draws rounded corners the flat square `SetMaskTexture` surface can't follow — those corners stay square. Don't "fix" this by masking; it's a render-surface limit.
+- Difficulty icon mode and text mode are separate internal canvas components (`DifficultyIcon` / `DifficultyText`), each with its own bounds and saved position — one component switching between two geometries broke preview sizing/alignment.
+- `MASK_ROUND` clips minimap, HybridMinimap, background, and border to the same pixel-identical circle asset; keep them on the shared mask or edges drift.
+- The cluster is hidden with events and scripts intact (`unregisterEvents = false`) — reparented indicators still rely on Blizzard's own event wiring.
+- Live-toggle is supported (enable/disable without reload); the drag-resize handle drives the `Size` setting clamped to the slider's 100–400 range.
 
-## canvas mode components
-
-all components below are individually positionable via canvas mode and can be disabled from the canvas mode dock. no settings checkboxes — canvas mode is the single source of truth for component visibility.
-
-| component         | description                                                                                                                       |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **ZoneText**      | zone name button. click opens world map. tooltip shows zone, subzone, pvp status. optional pvp zone colouring via canvas settings |
-| **Clock**         | game/local time, updates every second. left-click opens time manager, right-click opens calendar. pending invite glow             |
-| **Coords**        | player map coordinates (x, y), updates every 0.1s. hides when no player position is available. supports canvas font/size/color overrides |
-| **Compartment**   | collects all LibDBIcon + legacy minimap buttons into a hover-reveal drawer with icon, name, click/tooltip handlers. hidden if a minimap click is bound to `Addons` |
-| **Zoom**          | zoom in/out buttons, fade in on minimap hover, fade out on leave. dimmed/disabled at min/max zoom                                 |
-| **Difficulty**    | reparented blizzard instance difficulty indicator. icon mode and text mode now use separate internal canvas components, each with its own bounds and saved position |
-| **Missions**      | reparented blizzard expansion landing page button (garrison/covenant/etc.). Canvas **Reveal on Mouseover** override fades it unless the minimap is hovered (mirrors the Compartment/Zoom hover-reveal); the canvas preview shows the current expansion's live icon, falling back to the latest expansion graphic |
-| **Mail**          | reparented blizzard new mail indicator                                                                                            |
-| **CraftingOrder** | reparented blizzard crafting order indicator                                                                                      |
-
-the minimap supports configurable left-, middle-, and right-click actions via plugin settings.
-
-canvas overrides (font, size, color) are supported for ZoneText, Clock, Coords, and Difficulty text mode via the canvas component settings panel. canvas respects the `DifficultyShowBackground` toggle in icon mode and shows a placeholder group-size number beneath the skull. `Difficulty` icon mode and text mode are handled as separate internal components, so preview sizing/alignment no longer depends on switching one component between two different geometries.
-
-## blizzard frames affected
-
-| frame                                              | action                                   |
-| -------------------------------------------------- | ---------------------------------------- |
-| `MinimapCluster`                                   | hidden via `NativeFrame:Hide` (full reparent + event teardown) |
-| `MinimapCluster.BorderTop`                         | hidden with cluster                      |
-| `MinimapCluster.ZoneTextButton`                    | hidden with cluster                      |
-| `MinimapCluster.Tracking`                          | hidden with cluster                      |
-| `MinimapCluster.InstanceDifficulty`                | reparented to overlay                    |
-| `MinimapCluster.IndicatorFrame.MailFrame`          | reparented to overlay                    |
-| `MinimapCluster.IndicatorFrame.CraftingOrderFrame` | reparented to overlay                    |
-| `ExpansionLandingPageMinimapButton`                | reparented to overlay (resized to 36×36) |
-| `MinimapBackdrop`                                  | alpha set to 0 (hides compass frame art) |
-| `MinimapCompassTexture`                            | hidden                                   |
-
-## settings
-
-| key                | type    | default | description                                    |
-| ------------------ | ------- | ------- | ---------------------------------------------- |
-| `Scale`            | slider  | 100     | overall minimap scale (%)                      |
-| `Size`             | slider  | 300     | minimap diameter in pixels (100–400)           |
-| `Shape`            | dropdown | `square` | `square` / `round` / `splatter` (HUD view always renders as splatter) |
-| `BorderRing`       | dropdown | `fadedcircle` | decorative ring around the round minimap (`none` / `blizzard` = `ui-hud-minimap-frame` / `round` = solid fill / `fadedcircle` = soft-edge mask / `void` = `wowlabs_minimapvoid-ring-single`). Tinted by `BorderColor`. Only shown when `Shape = round` |
-| `ZoneTextColoring` | boolean | true    | colour zone text by pvp type (canvas override) |
-| `DifficultyShowBackground`| boolean | false   | show blizzard banner behind difficulty icon on the live minimap |
-| `LeftClickAction` | dropdown | `none` | left-click action for the minimap |
-| `MiddleClickAction` | dropdown | `none` | middle-click action for the minimap |
-| `RightClickAction` | dropdown | `tracking` | right-click action for the minimap |
-
-## data flow
-
-savedvariables → `ApplySettings()` → sizes container, skins border, applies component visibility via `IsComponentDisabled()`, restores canvas positions via `ComponentDrag:RestoreFramePositions()`, applies canvas overrides via `OverrideUtils.ApplyOverrides()`, sets scale
-
-## third-party addon compatibility
-
-### FarmHud
-
-FarmHud reparents the `Minimap` surface to its own full-screen HUD frame while active, then restores it on hide. orbit cooperates via:
-
-1. **`RegisterForeignAddOnObject`** — tells FarmHud about our container so it can move child frames to its dummy placeholder.
-2. **`Guard:Suspend` / `Guard:Resume`** — on FarmHud show, FrameGuard protection (SetParent snap-back + enforce-show) is suspended so FarmHud can freely reparent and resize the surface. on hide, protection is resumed.
-3. **SetPoint / SetSize hooks** — also check the suspension flag and yield while FarmHud is active.
-4. **`ApplySettings()` guards** — minimap surface sync (size bounce, re-anchor) and the recapture check are skipped when `_farmHudActive` is set, so visibility events (mount/dismount/shapeshift) don't fight FarmHud's layout.
-5. **No UI hiding needed** — FarmHud's HUD is a separate full-screen frame, not layered under our container. Our Overlay, ClickCapture, and compartment all remain functional on the minimap slot while FarmHud is open.
+## References
+- `Core/Canvas/` (`/canvas-mode` skill) — component drag, overrides, previews.
+- `OrbitEngine.NativeFrame`, `OrbitEngine.FrameGuard`, `OrbitEngine.ComponentDrag`, `OrbitEngine.OverrideUtils` in `Core/`.
+- Blizzard source: `agent/wow-ui-source` `Blizzard_Minimap/Minimap.xml` (cluster layout, 215x226 border anchoring quirk noted in `MinimapConstants.lua`).
+- Skills: `/canvas-mode`, `/wow-frames`, `/pixel`.

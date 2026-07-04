@@ -44,9 +44,9 @@ function IconCanvasPreview:AttachTextComponents(preview, textComponents, savedPo
     local halfW, halfH = preview.sourceWidth / 2, preview.sourceHeight / 2
 
     for _, def in ipairs(textComponents) do
+        local fontSize = def.fontSize or 12
         local fs = preview:CreateFontString(nil, "OVERLAY", "GameFontHighlight", 7)
-        fs:SetFont(fontPath, 12, Orbit.Skin:GetFontOutline())
-        Orbit.Skin:ApplyFontShadow(fs)
+        Orbit.Skin:SetFontWithShadow(fs, fontPath, fontSize)
         fs:SetText(def.preview)
         fs:SetTextColor(1, 1, 1, 1)
         fs:SetPoint("CENTER", preview, "CENTER", 0, 0)
@@ -71,7 +71,7 @@ function IconCanvasPreview:AttachTextComponents(preview, textComponents, savedPo
 
         -- Re-hydrate saved overrides onto the preview FontString
         if saved.overrides and OverrideUtils then
-            OverrideUtils.ApplyOverrides(fs, saved.overrides, { fontSize = 12, fontPath = fontPath })
+            OverrideUtils.ApplyOverrides(fs, saved.overrides, { fontSize = fontSize, fontPath = fontPath })
         end
 
         if CreateDraggableComponent then

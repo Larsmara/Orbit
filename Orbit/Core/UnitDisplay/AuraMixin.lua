@@ -124,8 +124,7 @@ function Mixin:SetupAuraIcon(icon, aura, size, unit, skinSettings, componentPosi
         icon.count = icon.Overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     end
     local fontPath, fontOutline = GetAuraFont()
-    icon.count:SetFont(fontPath, AURA_COUNT_SIZE, fontOutline)
-    Orbit.Skin:ApplyFontShadow(icon.count)
+    Orbit.Skin:SetFontWithShadow(icon.count, fontPath, AURA_COUNT_SIZE, fontOutline)
     icon.count:ClearAllPoints()
     local cScale = icon:GetEffectiveScale() or 1
     local countPad = Orbit.Engine.Pixel:Multiple(1, cScale)
@@ -142,8 +141,7 @@ function Mixin:SetupAuraIcon(icon, aura, size, unit, skinSettings, componentPosi
         end
         if timerText and timerText.SetFont then
             timerText:SetParent(icon.Overlay)
-            timerText:SetFont(fontPath, AURA_TIMER_SIZE, fontOutline)
-            Orbit.Skin:ApplyFontShadow(timerText)
+            Orbit.Skin:SetFontWithShadow(timerText, fontPath, AURA_TIMER_SIZE, fontOutline)
             timerText:ClearAllPoints()
             timerText:SetPoint("CENTER", icon, "CENTER", 0, 0)
             timerText:SetJustifyH("CENTER")

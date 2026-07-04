@@ -1,53 +1,35 @@
-# action bars
+# ActionBars
 
-replaces blizzard's action bars with a configurable grid-based system.
+## Description
+Replaces Blizzard's action bars with a configurable grid-based system: up to 8 standard bars (WoW 12.0's 180-slot hard limit) plus pet and stance bars.
 
-## purpose
+## Purpose
+Suppresses the native bars and reparents their buttons into Orbit containers so layout, skinning, text, and visibility are all Orbit-controlled while Blizzard's secure button machinery keeps doing the casting.
 
-suppresses native blizzard action bars and reparents their buttons into orbit containers. supports up to 8 standard bars (wow 12.0 hard limit of 180 slots) plus a pet bar.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| ActionBars.lua | main plugin. bar creation, button reparenting, visibility drivers, ooc fade, grid layout, spell state coloring (range/usable/mana), proc glow hooks (via GlowController, triggered by ActionButtonSpellAlertManager). |
-| ActionBarsContainer.lua | individual bar container frame. manages button grid within a single bar. |
-| ActionBarsPreview.lua | canvas mode preview generation. |
-| ActionBarsText.lua | text overlay settings (keybind, macro name, count) and canvas mode text styling. also re-levels blizzard's `ProfessionQualityOverlayFrame` (the item-quality diamond) so it renders above the orbit border. |
+| ActionBars.lua | plugin (`Orbit_ActionBars`); bar creation, button reparenting, visibility drivers, spell-state coloring, proc glow hooks |
+| ActionBarsContainer.lua | per-bar container frame and button grid |
+| ActionBarsPreview.lua | canvas mode previews |
+| ActionBarsText.lua | keybind/macro/count text overlays and quality-overlay re-leveling |
 
-## how it works
+Native bars are hidden and their buttons reparented into containers; visibility is macro-conditional state drivers (`BASE_VISIBILITY_DRIVER`, `BAR1_BASE_DRIVER`, `PET_BAR_BASE_DRIVER` at file top) via `RegisterStateDriver`. Spell-state events (`PLAYER_TARGET_CHANGED`, `ACTIONBAR_UPDATE_USABLE`, `SPELL_UPDATE_USABLE` leading-edge throttled, `ACTION_RANGE_CHECK_UPDATE`) arrive on the EventBus and drive `RefreshIconColor`, tinting icons for out-of-range/out-of-mana/unusable from settings colors cached until a settings change invalidates them. Proc glows come from `hooksecurefunc` on `ActionButtonSpellAlertManager.ShowAlert/HideAlert`, rendered by `GlowController`. Skinning is `Orbit.Skin.ActionButtonSkin` (Core/Skinning); `IconPadding = 0` swaps per-icon borders for a single `ApplyIconGroupBorder` group border, and containers set `mergeBorders = true` in `anchorOptions` so anchored bars merge borders across bars.
 
-```mermaid
-graph LR
-    blizzard[blizzard bars] -->|suppressed| orbit[orbit containers]
-    orbit --> grid[grid layout engine]
-    grid --> buttons[reparented buttons]
-    buttons --> skin[ActionButtonSkinning]
-```
+## Gotchas
+- Never `hooksecurefunc` Blizzard's `ActionButton.Update` / `.UpdateUsable`. Under 12.0.5+ secret-value strictness those method hooks taint the secure call frame, which propagates into `ActionButton_ApplyCooldown` (rejects secret `start`/`duration`) and `UpdateShownButtons` (blocks `SetShown` in combat). Spell-state coloring is event-driven for exactly this reason.
+- Pet bar driver is `[petbattle][vehicleui] hide; [pet,nooverridebar,nopossessbar] show; hide` — the positive `pet` form with override/possess exclusions. `[nopet]` alone leaks the bar during mind-control/possession.
+- Pet events (`UNIT_PET`, `PET_BAR_UPDATE`, `PET_UI_UPDATE`, `UPDATE_VEHICLE_ACTIONBAR`, `PLAYER_CONTROL_GAINED`, entering world) only re-run `LayoutButtons` — Blizzard's `PetActionButtonMixin` still drives icon/cooldown updates on the reparented buttons. A 50ms trailing-edge debounce coalesces `UNIT_PET` (fires before action info loads) with the following `PET_BAR_UPDATE` (fires once loaded).
+- State drivers are registered at container creation and in `ApplySettings` only; WoW re-evaluates macro conditions automatically, so never re-register them from event handlers.
+- Drivers are unregistered in Edit Mode so bars stay shown and selectable; `ApplyAll` restores them on exit.
+- Reparenting must preserve secure frame references for combat; all grid math must be pixel-snapped.
+- Blizzard creates `ProfessionQualityOverlayFrame` (item-quality diamond) lazily with no frame level, so it renders under the Orbit border; `ABText:ApplyQualityOverlay` raises it to `Constants.Levels.IconGlow`, hooked on the button's `UpdateProfessionQuality`. Placement stays at Blizzard's default — the diamond is not a canvas component.
+- Pet bar is index 9, stance bar index 10 (special bars — no OOC fade, content-driven icon count).
 
-1. native bars are hidden and their buttons reparented into orbit container frames
-2. each container uses a grid layout engine for button positioning
-3. `ActionButtonSkinning` (in core/skinning) handles visual overrides
-4. skin settings include `iconBorder = true` to opt into `GlobalSettings.IconBorderStyle` (NineSlice/LSM icon borders). when `IconPadding = 0`, a single group border wraps the container instead of per-icon borders. containers set `mergeBorders = true` in `anchorOptions`, enabling cross-bar group borders when anchored at padding=0
-5. visibility is driven by combat state and ooc fade settings
-6. spell state events (`ACTIONBAR_UPDATE_USABLE`, `SPELL_UPDATE_USABLE`, `ACTION_RANGE_CHECK_UPDATE`, `PLAYER_TARGET_CHANGED`) drive `RefreshIconColor` to tint icons for out-of-range, out-of-mana, and not-usable states. **No `hooksecurefunc` on Blizzard's `ActionButton.Update` / `.UpdateUsable`** — those hooks taint the secure call frame under 12.0.5+ secret-value strictness, which propagates into `ActionButton_ApplyCooldown` (rejecting secret `start`/`duration`) and `UpdateShownButtons` (blocking `SetShown` in combat).
+## Secrets
+The plugin never intercepts Blizzard's cooldown paths, so secret `start`/`duration` values stay inside Blizzard code (see the hook gotcha above). `RefreshIconColor` branches on `IsUsableAction`/`C_Spell.IsSpellInRange` results, which are non-secret for the player's own action buttons — the tint colors themselves come from Orbit settings, not secret data.
 
-## adding a new bar feature
-
-1. if it affects all bars, add it to `ActionBars.lua` in the `ApplySettings` section
-2. if it affects individual bar containers, add it to `ActionBarsContainer.lua`
-3. text/font features go in `ActionBarsText.lua`
-4. always add schema entries in `AddSettings` for user configuration
-
-## rules
-
-- pet bar has special handling (index-based, no ooc fade)
-- pet bar visibility driver: `[petbattle][vehicleui] hide; [pet,nooverridebar,nopossessbar] show; hide` — positive `pet` form, with `nooverridebar`/`nopossessbar` exclusions so the bar stays hidden during mind-control / possession (`[nopet]` alone leaks the bar through these states)
-- pet bar listens for `UNIT_PET`, `PET_BAR_UPDATE`, `PET_UI_UPDATE`, `UPDATE_VEHICLE_ACTIONBAR`, `PLAYER_CONTROL_GAINED`, `PLAYER_ENTERING_WORLD`. handler runs `LayoutButtons(PET_BAR_INDEX)` only — Blizzard's `PetActionButtonMixin` still drives icon/cooldown updates on the reparented buttons; we only need to refresh hide-empty + skinning + layout
-- 50ms trailing-edge debounce coalesces UNIT_PET (which fires before action info loads) with the immediately-following PET_BAR_UPDATE (which fires once info is loaded) into a single LayoutButtons call with fresh data
-- state driver is set once at container creation and once in `ApplySettings`; it does NOT need re-registration on pet events — WoW state drivers re-evaluate macro conditions automatically when the underlying state changes
-- pet bar visibility driver is suspended in edit mode so the frame stays selectable for positioning; `ApplyAll` restores it on exit
-- button reparenting must preserve secure frame references for combat
-- all grid math must use pixel-snapped values
-- bar visibility uses macro conditional drivers (`RegisterStateDriver`)
-- blizzard's `ProfessionQualityOverlayFrame` carries no frame level and renders beneath the orbit border; `ABText:ApplyQualityOverlay` raises it to `Constants.Levels.IconGlow` (above per-icon and merged group borders). it is `hooksecurefunc`-bound to `UpdateProfessionQuality` since blizzard creates the overlay lazily. placement is left at blizzard's default — the diamond is not a canvas component
+## References
+- `Core/Skinning/` (ActionButtonSkin), `Core/Shared/GlowController.lua`, `Core/Plugin/NativeBarMixin.lua`.
+- Skills: `/wow-frames` (state drivers, secure templates), `/wow-secrets`, `/pixel`.
+- Blizzard source: `agent/wow-ui-source/` ActionButton/ActionBar files.

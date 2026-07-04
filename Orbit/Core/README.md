@@ -1,74 +1,43 @@
-# orbit core
+# Core
 
-this is the root of the orbit engine. everything that plugins depend on lives here.
+## Description
+Root of the Orbit engine. Shared infrastructure, plugin lifecycle, rendering, configuration UI, Edit Mode, Canvas Mode, skinning, and unit display mixins — everything plugins consume. Core has zero knowledge of any specific plugin.
 
-## purpose
+## Purpose
+Keeps plugins thin and coherent: all cross-cutting concerns (events, pixel math, combat safety, settings resolution, positioning) live here exactly once. Dependencies flow strictly inward — plugins depend on Core, Core never depends on plugins.
 
-core provides the shared infrastructure, rendering engine, configuration system, canvas mode, skinning pipeline, and unit display mixins that all plugins consume. it has zero knowledge of any specific plugin.
+## Implementation
+Boot: `Init.lua` (ADDON_LOADED bootstrap, plugin registration, SavedVariables seeding, PLAYER_LOGIN → `Orbit:OnLoad()`, PLAYER_LOGOUT → PositionManager/GlobalSettings flush). `API.lua` is the programmatic/debug API (`Orbit.API:GetState/ResetProfile/HardReset/UnlockFrames/InspectPlugin`); slash commands live in `Config/Entry/SlashCommands.lua`.
 
-## directory structure
+| Directory | Role |
+|---|---|
+| Infrastructure/ | low-level systems (EventBus, Pixel, CombatManager, animation) |
+| Plugin/ | plugin lifecycle: registration, PluginMixin, ProfileManager |
+| Shared/ | constants, media, SecretValueUtils, glow controller |
+| Color/ | class/reaction color resolution, curve engine |
+| Skinning/ | borders, textures, icons, cast bars, action buttons |
+| UnitDisplay/ | unit frame mixins (health, auras, cast bars, status icons) |
+| EditMode/ | frame positioning engine (drag, anchor graph, persistence) |
+| CanvasMode/ | intra-frame component editor dialog |
+| Config/ | settings UI (SchemaBuilder, renderer, widgets, panels) |
+| Onboarding/ | first-run guided tours |
+| Libs/, assets/ | vendored libraries, bundled media |
 
-```
-Core/
-  Init.lua          -- addon bootstrap, plugin registration, saved variables
-  API.lua           -- programmatic/debug api (Orbit.API: GetState, ResetProfile, HardReset, UnlockFrames, InspectPlugin) — slash commands live in Config/Entry/SlashCommands.lua
-  Infrastructure/   -- low-level systems (events, pixel math, combat, animation)
-  Plugin/           -- plugin lifecycle (registration, profiles, mixins)
-  Shared/           -- constants, media registrations, glow controller
-  Color/            -- color resolution (class colors, reaction colors, curve engine)
-  Skinning/         -- visual rendering (borders, textures, icons, cast bars, action buttons)
-  UnitDisplay/      -- unit frame mixins (health bars, auras, cast bars, status icons)
-  EditMode/         -- edit mode engine (dragging, anchoring, positioning, selection)
-  CanvasMode/       -- canvas mode dialog (intra-frame component editor, overrides, creators)
-  Config/           -- settings ui (schema builder, renderer, widgets, options panel)
-  Onboarding/       -- first-run guided tour (edit mode playground, canvas / drawer hints)
-  Libs/             -- third-party libraries
-  assets/           -- textures and media files
-```
+Data architecture — strict boundaries for what persists where in `OrbitDB`:
+- `Orbit.db.AccountSettings` — true account-wide application data (color history, tutorial flags, minimap icon). Immune to ProfileManager. Access only via `Orbit:GetAccountData/SetAccountData`.
+- `Orbit.db.GlobalSettings` — the aesthetic theme for the *active profile* (fonts, border sizes, bar textures), cloned per profile switch. Read via `Orbit:GetTheme(key)`, never indexed directly.
+- `Orbit.db.profiles[name]` — per-profile layout data: plugin settings, positions, anchors. Plugins reach it only through `PluginMixin:GetSetting/SetSetting`.
+- `Orbit.db.SpecData[charKey][specID][sysIdx][key]` — per-character per-spec, via `GetSpecData/SetSpecData`.
+- `Orbit.db.CharData[charKey][system][key]` — per-character spec-independent (quest-watch shadow state), via `GetCharData/SetCharData`. Immune to profiles and spec.
 
-## dependency direction
+## Gotchas
+- **Never store non-theme application data in `GlobalSettings`.** ProfileManager clones `profile.GlobalSettings` over the live `Orbit.db.GlobalSettings` block on every profile activation — which fires on login and `/reload` — so un-flushed application data parked there is permanently erased. Account-wide data belongs in `AccountSettings`.
+- `SpecData` is wiped on class change (`SpecDataMeta` guard in `Init.lua`) — SpecIDs are class-bound; surviving data would be stale after a PTR copy or faction/realm service.
+- No file in Core may reference a plugin by name; new engine-level systems go in `Infrastructure/`, new shared unit-frame behavior in `UnitDisplay/`, visual rendering in `Skinning/`, config widgets in `Config/Widgets/`.
+- Constants belong in `Shared/Constants.lua`, never inline.
 
-```mermaid
-graph TD
-    subgraph core
-        infrastructure --> shared
-        plugin --> infrastructure
-        plugin --> shared
-        color --> shared
-        skinning --> shared
-        skinning --> infrastructure
-        unitdisplay --> skinning
-        unitdisplay --> plugin
-        unitdisplay --> infrastructure
-        editmode --> infrastructure
-        editmode --> plugin
-        canvasmode --> editmode
-        canvasmode --> skinning
-        config --> plugin
-        config --> skinning
-    end
-    plugins --> core
-```
+## Secrets
+Core owns the engine-wide secret-value helpers in `Shared/SecretValueUtils.lua` (guards + `Orbit.DEBUG_SECRETS`-gated chat diagnostics). Per-module handling is documented in each module's README; classification and sink patterns live in the `/wow-secrets` skill.
 
-dependencies flow **inward**. plugins depend on core. core never depends on plugins.
-
-## data architecture
-
-orbit uses strict boundaries for how data is saved and persisted across `/reload` and sessions:
-
-- `Orbit.db.AccountSettings` — **true account-wide application data**. data that belongs to the human player at the keyboard regardless of character or spec (color picker history, tutorial flags, minimap icon visibility). entirely immune to `ProfileManager`.
-- `Orbit.db.GlobalSettings` — **the aesthetic theme for the current profile**. ui styling that applies globally across *all* plugins for a specific layout configuration (universal border sizes, main fonts, status bar textures).
-- `Orbit.db.profiles[name]` — per-profile layout data (plugin settings, frame positions, anchors).
-- `Orbit.db.SpecData[charKey][specID][systemIndex][key]` — per-character per-spec storage layered through `PluginMixin:GetSpecData` / `SetSpecData`.
-
-> do not put non-theme application data into `GlobalSettings`. `ProfileManager` clones `profile.GlobalSettings` into the live `Orbit.db.GlobalSettings` memory block on every profile activation (which fires on login and `/reload`). un-flushed application data stored there is permanently erased.
-
-## rules
-
-- no file in core may reference a plugin by name
-- new engine-level systems go in infrastructure
-- new unit frame shared behavior goes in unitdisplay
-- new visual rendering logic goes in skinning
-- new configuration widgets go in config/widgets
-- constants belong in shared/constants.lua, never inline
-- all files must follow the constants-at-top, no-magic-numbers standard
+## References
+`Core/Plugin/README.md` (profile lifecycle, default-values rules) · `Plugins/README.md` (new-plugin checklist) · `EditMode/README.md`, `CanvasMode/README.md` · skills: `/wow-secrets`, `/wow-frames`, `/pixel`, `/canvas-mode`.

@@ -1,37 +1,35 @@
-# infrastructure
+# Infrastructure
 
-low-level systems that the entire addon depends on. these have no knowledge of plugins, skinning, or ui.
+## Description
+Low-level services the entire addon depends on: event dispatch, pixel math, combat-state deferral, error trapping, and async scheduling. No knowledge of plugins, skinning, or config UI.
 
-## purpose
+## Purpose
+The foundation layer — everything above it (rest of Core, Plugins, sub-addons) builds on these primitives. May depend only on `Core/Shared/` and libs.
 
-provides foundational services: event dispatch, pixel-perfect math, combat state tracking, animation utilities, and async scheduling.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| EventBus.lua | pub/sub event system. wraps both wow events and custom orbit events. |
-| Pixel.lua | pixel-snapping math. enforces crisp rendering at any ui scale. fires `ORBIT_DISPLAY_SIZE_CHANGED`. |
-| CombatManager.lua | tracks combat state. provides safe-to-mutate guards. |
-| Animation.lua | hover-fade only — `ApplyHoverFade` / `StopHoverFade`. |
-| Async.lua | deferred execution helpers (throttle, debounce). |
-| KeybindSystem.lua | keybind resolution for action bar buttons and tracked abilities. |
-| TickMixin.lua | tick mark overlay for status bars (recharge segments). |
-| HealerAuraRegistry.lua | healer-specific spell and raid buff registry. maps aura slots by class/spec. |
-| ErrorHandler.lua | trust-boundary error catcher. `Wrap` guards plugin lifecycle / event callbacks so a single misbehaving module can't take down the addon; failures print to chat and ring-buffer (max 50) in the standalone `OrbitErrorLogDB` SavedVariable, split out of `OrbitDB` so a corrupt log cannot take down user settings. |
-| StrataEngine.lua | frame-level allocation (`GetFrameLevel`, `PopulateDefaults`); no scope-level Bump controls. |
-| Profiler.lua | opt-in CPU profiler, `Begin`/`End` instrumentation. Start/Stop from Spotlight (**Tools → Performance Profiler**) via `Orbit.Profiler:Start()` / `:Stop()`. |
+| EventBus.lua | pub/sub wrapping WoW events and custom `ORBIT_*` events |
+| Pixel.lua | pixel-snapping math (`Snap`, `Multiple`); fires `ORBIT_DISPLAY_SIZE_CHANGED` on scale change |
+| CombatManager.lua | combat-state tracking; `QueueUpdate(callback)` defers protected work until regen |
+| ErrorHandler.lua | `Wrap` at trust boundaries; failures print to chat and ring-buffer (max 50) into `OrbitErrorLogDB` |
+| Async.lua | keyed `Debounce` / `Throttle` schedulers |
+| Animation.lua | hover fade only: `ApplyHoverFade` / `StopHoverFade` |
+| KeybindSystem.lua | keybind resolution for action bar buttons and tracked abilities |
+| TickMixin.lua | tick-mark overlays for status bars (recharge segments) |
+| StrataEngine.lua | root-container frame-level allocation (`GetFrameLevel`, `PopulateDefaults`) |
+| HealerAuraRegistry.lua | class/spec healer aura slot registry |
+| Profiler.lua | opt-in CPU profiler (`Begin`/`End`; Spotlight → Tools → Performance Profiler) |
 
-## adding a new system
+New systems attach to `Orbit.Engine` or `Orbit` and load via a `<Script>` entry in `Infrastructure.xml` in dependency order — never listed in the `.toc`.
 
-1. create a new lua file in this directory
-2. attach it to `Orbit.Engine` or `Orbit` namespace as appropriate
-3. add a `<Script file="..."/>` entry to `Core/Infrastructure/Infrastructure.xml` in dependency order — never list individual `.lua` files in `Orbit.toc` for a module that has its own XML bundle
-4. the system must not reference any plugin, skinning module, or config widget
+## Gotchas
+- `OrbitErrorLogDB` is a separate SavedVariable from `OrbitDB` on purpose — a corrupt error log cannot take down user settings. Don't merge them.
+- Nothing here may reference a plugin, skinning module, or config widget; this module loads before everything except Shared and libs.
+- `CombatManager:QueueUpdate` has a queue-size cap and logs an error when hit — it is a combat-deferral valve, not an unbounded work queue.
+- StrataEngine allocates root-container Z-index only (no scope-level bump controls); a new plugin adds itself to `PopulateDefaults()` and calls `GetFrameLevel("Global_HUD", "Orbit_PluginName")` in OnLoad. Entity ordering is profile-persisted; only `_volatileBase` is session-only.
+- Animation.lua is deliberately scoped to hover fade — nothing else.
+- Systems are stateless or own explicit init/teardown; prefer `EventBus:Fire` over direct cross-system calls; no UI frame creation beyond internal event frames.
 
-## rules
-
-- infrastructure files load before everything except shared and libs
-- no ui frame creation except for internal event frames
-- all systems must be stateless or use explicit init/teardown
-- prefer `EventBus:Fire()` over direct function calls for cross-system communication
+## References
+`Core/Shared/README.md`, `CLAUDE.md` (pcall policy, error-handling boundaries), /pixel (Snap vs Multiple), /wow-frames.

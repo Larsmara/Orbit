@@ -1,58 +1,30 @@
-# cooldown viewer extensions
+# CooldownViewerExtensions
 
-shared plugin that adds extra side tabs to blizzard's `CooldownViewerSettings` frame. owns the `Blizzard_CooldownViewer` addon-loaded hook, the anchor chain that walks below `AurasTab`, and the click dispatch. consumers (currently `Orbit_Tracked`, future plugins later) call `RegisterTab` to add a tab.
+## Description
+Registrar plugin that adds extra side tabs to Blizzard's `CooldownViewerSettings` frame and bridges spell drags out of that panel to Orbit drop targets. Consumers (currently `Orbit_Tracked`) call `RegisterTab`; it never registers tabs of its own.
 
-## why this exists separately
+## Purpose
+The tabs are not specific to Tracked — any plugin that spawns editable elements from the cooldown viewer settings panel can add a tab without knowing about Blizzard's `LargeSideTabButtonTemplate` or coupling to Tracked. As its own plugin, Tracked can be disabled or rewritten without breaking the registration API. It is infrastructure that lives under `Plugins/` because it needs the plugin lifecycle and `liveToggle = false`.
 
-the tabs are not specific to the tracked plugin. anything that needs to spawn editable elements from the cooldown viewer settings panel should be able to add its own tab without coupling to tracked or knowing about blizzard's `LargeSideTabButtonTemplate`. keeping this as its own plugin also means tracked can be enabled/disabled (or rewritten again) without breaking the registration api.
-
-**Accepted exception to the "plugins never call other plugins" rule.** CVE is infrastructure that happens to live under `Plugins/` (it needs `liveToggle = false` and the plugin lifecycle). Consumers reaching it via `Orbit:GetPlugin("Orbit_CooldownViewerExtensions"):RegisterTab{...}` is sanctioned because `RegisterTab` returns/operates on a live frame handle that an EventBus signal cannot supply. Treat CVE as a registrar, not as a peer plugin.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| CooldownViewerExtensionsPlugin.lua | plugin registration (`Orbit_CooldownViewerExtensions`), `RegisterTab` api, `ADDON_LOADED` hook for `Blizzard_CooldownViewer`, deferred build queue, anchor chain below `AurasTab` |
-| CooldownSettingsDragBridge.lua | captures the spellID of a spell dragged out of the `CooldownViewerSettings` panel and dispatches to any Orbit frame exposing `:OnCooldownSettingsDrop(spellID)`. installed from the plugin's settings-ready path. |
+| CooldownViewerExtensionsPlugin.lua | registration (`Orbit_CooldownViewerExtensions`), `RegisterTab` API, `ADDON_LOADED` hook for `Blizzard_CooldownViewer`, deferred build queue, anchor chain |
+| CooldownSettingsDragBridge.lua | captures the spellID dragged out of the panel and dispatches to any frame exposing `:OnCooldownSettingsDrop(spellID)` |
 
-## drag bridge
+`RegisterTab{ id, atlas, tooltipText, onClick }`: builds immediately if `CooldownViewerSettings` is loaded, otherwise queues until `Blizzard_CooldownViewer` fires `ADDON_LOADED`. Duplicate ids are ignored (idempotent, safe from multiple consumers' `OnLoad`). The first tab anchors below `CooldownViewerSettings.AurasTab` (-3 y gap, matching Blizzard's spacing); later tabs chain in registration order, which is deterministic at load time.
 
-Blizzard's internal panel drag (`BeginOrderChange`) never populates `GetCursorInfo`, so the normal cursor-based Orbit drop path can't see spells dragged out of the settings panel. The bridge uses the **Spellid addon pattern**: `GameTooltip:HookScript("OnUpdate", ...)` continuously reads `tooltip:GetSpell()` into a local cache. On `GLOBAL_MOUSE_DOWN` over a panel spell (verified by walking the tooltip owner's parent chain to `CooldownViewerSettings`), the cached spellID is armed; on `GLOBAL_MOUSE_UP` the bridge walks `GetMouseFoci()` and calls `frame:OnCooldownSettingsDrop(spellID)` on the first match.
+Drag bridge: Blizzard's internal panel drag (`BeginOrderChange`) never populates `GetCursorInfo`, so the normal cursor-based drop path is blind here. Instead a `GameTooltip:HookScript("OnUpdate")` continuously caches `tooltip:GetSpell()`; `GLOBAL_MOUSE_DOWN` over a panel spell (verified by walking the tooltip owner's parent chain to `CooldownViewerSettings`) arms the cached spellID, and `GLOBAL_MOUSE_UP` walks `GetMouseFoci()` and calls `OnCooldownSettingsDrop(spellID)` on the first frame that implements it. Spell-only — the panel never shows items — and dispatch reuses the same `DragDrop:BuildTrackedItemEntry`/`BuildTrackedBarPayload` builders as the spellbook/action-bar drop paths.
 
-**No mixin hooks.** The deleted first-generation bridge used `hooksecurefunc(CooldownViewerSettingsItemMixin, "OnDragStart", ...)` — a mixin-table hook that tainted every panel item and propagated into CDM viewer children. The tooltip approach is a pure-read pattern (`HookScript` is a script-handler hook; `tooltip:GetSpell()` is read-only), so zero taint surface.
+## Gotchas
+- Accepted exception to "plugins never call other plugins": consumers reach it via `Orbit:GetPlugin("Orbit_CooldownViewerExtensions"):RegisterTab{...}` because `RegisterTab` operates on a live frame handle an EventBus signal cannot supply. Treat it as a registrar, not a peer plugin.
+- Tabs are parented to `UIParent`, not `CooldownViewerSettings`. Each tab carries `hooksecurefunc(tab, "SetChecked")` and `SetCustomOnMouseUpHandler` hooks that Blizzard's click dispatch can invoke; as children of the panel those callbacks would write to a child of a secure Blizzard frame on its secure stack and taint the panel's attribute chain. Visibility syncs via `parent:HookScript("OnShow"/"OnHide")` — script-handler hooks don't propagate method-level taint.
+- Strata is pinned to `DIALOG`, not matched to the panel: `CooldownViewerSettings` sets no strata (default `MEDIUM`) and would render below `HIGH` frames like raid frames.
+- The deleted first-generation bridge hooked `CooldownViewerSettingsItemMixin.OnDragStart` — a mixin-table hook that tainted every panel item and propagated into CDM viewer children. The tooltip read is pure (`GetSpell()` is read-only); never reintroduce mixin hooks here.
+- `_lastBuiltTab` tracks the chain tail across `BuildPendingTabs` flushes. Consumers call `RegisterTab` back-to-back (Tracked registers Icons then Bars); if the panel is already open the first call flushes before the second queues, and without the tail pointer the second tab would re-anchor to `AurasTab` and overlap the first.
+- Extension tabs never call `SetDisplayMode` — each click is a fire-and-forget action and the panel's content stays on whatever the user last selected. The plugin has no settings, no persistent state, no spec data, and cannot be disabled from the Orbit panel (`liveToggle = false`).
 
-**Spell-only.** The cooldown viewer settings panel never shows items. The bridge always dispatches `(type="spell", spellID)` through `DragDrop:BuildTrackedItemEntry` / `BuildTrackedBarPayload`, reusing the same builders as the spellbook/action-bar drop paths.
-
-## public api
-
-```lua
-local CVE = Orbit:GetPlugin("Orbit_CooldownViewerExtensions")
-CVE:RegisterTab({
-    id          = "Orbit_Tracked.Icons", -- unique key, dedupes across calls
-    atlas       = "communities-chat-icon-plus",
-    tooltipText = "Add a new tracked icon container",
-    onClick     = function(tabFrame) ... end,
-})
-```
-
-- if `CooldownViewerSettings` is already loaded, the tab is built immediately
-- if not, the spec is queued and built when `Blizzard_CooldownViewer` fires `ADDON_LOADED`
-- duplicate `id`s are ignored (idempotent — safe to call from `OnLoad` of multiple consumers)
-- the click handler is what executes — these tabs do **not** call `SetDisplayMode`, so the parent frame's content panel stays on whatever the user last selected. each click is a fire-and-forget action.
-
-## anchor chain
-
-the first registered extension tab anchors `TOP -> BOTTOM` of `CooldownViewerSettings.AurasTab` with a `-3` y gap (matching blizzard's spell→auras spacing). subsequent extension tabs chain off the previously-built tab in registration order. registration order is deterministic at load time (tracked registers icons before bars), so the visual order is stable.
-
-## parenting
-
-tabs are parented to `UIParent`, **not** `CooldownViewerSettings`. the `hooksecurefunc(tab, "SetChecked", ...)` and `SetCustomOnMouseUpHandler` hooks that live on each tab can be called by blizzard's click dispatch; if the tabs were children of `CooldownViewerSettings`, those callbacks would be writing to a child of a secure blizzard frame while on the panel's secure call stack, and the taint would propagate into the panel's attribute chain. frame level is `parent:GetFrameLevel() + 10` so the tabs render above the panel. strata is pinned to `DIALOG` (not matched to the panel): `CooldownViewerSettings` sets no strata, so it sits at the default `MEDIUM`, which renders below `HIGH` frames like raid frames — `DIALOG` is WoW's standard menu/dialog altitude and keeps the tabs above them. visibility is synced via `parent:HookScript("OnShow"/"OnHide")` — script-handler hooks, not method hooks, which don't propagate method-level taint.
-
-`Plugin._lastBuiltTab` tracks the running tail of the chain across multiple `BuildPendingTabs` flushes. consumers commonly call `RegisterTab` more than once in a row (tracked registers Icons and Bars in two separate calls), and if the cooldown viewer is already open the first call flushes `pendingTabs` before the second call is queued — without `_lastBuiltTab` the second tab would re-anchor to `AurasTab` and overlap the first.
-
-## what this plugin does NOT do
-
-- no displayMode switching — extension tabs are click buttons, not panel switchers
-- no settings, no persistent state, no spec data
-- no live toggle — `liveToggle = false`. you cannot disable this plugin from the orbit panel; it's pure infrastructure
-- does not register tabs on its own — every tab comes from another plugin
+## References
+- Consumers: `Plugins/Tracked/README.md`; sibling: `Plugins/CooldownManager/README.md`.
+- Skills: `/wow-frames` (taint, hook patterns).
+- Blizzard source: `agent/wow-ui-source/` Blizzard_CooldownViewer (CooldownViewerSettings, LargeSideTabButtonTemplate).

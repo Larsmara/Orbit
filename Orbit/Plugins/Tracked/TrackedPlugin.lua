@@ -32,6 +32,8 @@ local Plugin = Orbit:RegisterPlugin("Tracked Items", "Orbit_Tracked", {
         IconSize = Constants.Cooldown.DefaultIconSize,
         IconPadding = Constants.Cooldown.DefaultPadding,
         aspectRatio = "1:1",
+        -- Tracked Icons ship with no active-phase glow; without this GetSetting returns nil and BuildOptionsFromLookup falls back to the global Medium default.
+        ActiveGlowType = Constants.Glow.Type.None,
         Opacity = 100,
         Width = 200,
         Height = 20,
@@ -44,6 +46,7 @@ local Plugin = Orbit:RegisterPlugin("Tracked Items", "Orbit_Tracked", {
     },
     OnLoad = function(self)
         self:EnsureStore()
+        self:SeedActiveGlowDefaults()
         self:RegisterTabs()
         self:RefreshForCurrentSpec()
         Orbit.EventBus:On("ORBIT_PLAYER_ENTERING_WORLD", function() self:RefreshForCurrentSpec() end, self)
@@ -74,6 +77,26 @@ function Plugin:EnsureStore()
         if gs.NextTrackedContainerId then bump(gs.NextTrackedContainerId - 1) end
         for id in pairs(gs.TrackedContainers) do bump(id) end
         Orbit.db.NextTrackedContainerId = nextId
+    end
+end
+
+-- Main-era containers rendered a Medium active glow via the old implicit default; seed them once so the new ship-with-None default doesn't silently strip glows from existing setups.
+function Plugin:SeedActiveGlowDefaults()
+    if Orbit.db.TrackedActiveGlowSeeded then return end
+    Orbit.db.TrackedActiveGlowSeeded = true
+    local function seed(store)
+        for _, record in pairs(store or {}) do
+            if record.mode == "icons" then
+                record.settings = record.settings or {}
+                if record.settings.ActiveGlowType == nil then
+                    record.settings.ActiveGlowType = Constants.Glow.DefaultType
+                end
+            end
+        end
+    end
+    seed(Orbit.db.GlobalSettings.TrackedContainers)
+    for _, profile in pairs(Orbit.db.profiles or {}) do
+        seed(profile.GlobalSettings and profile.GlobalSettings.TrackedContainers)
     end
 end
 
@@ -435,6 +458,25 @@ function Plugin:RefreshBarPayloads()
             end
         end
     end
+end
+
+-- [ ACTIVE DURATION LEARN ] -------------------------------------------------------------------------
+-- Spell-only: override/tooltip resolve synchronously (CooldownData:ResolveActiveDuration), else a one-shot UNIT_AURA watch fills data.activeDuration on first application (items stay parser-sourced). Resolved values are kept until a forced reparse (talent change) so routine applies never re-scan tooltips.
+function Plugin:RequestActiveDurationLearn(record, key, data, force)
+    if not data or data.type ~= "spell" or not data.id then return end
+    if not force and (data.activeDuration ~= nil or data.activeDurationLearned) then return end
+    local value, watch = Orbit.CooldownData:ResolveActiveDuration(data.id)
+    if value ~= nil then
+        data.activeDuration = value
+        return
+    end
+    if not watch or data.activeDurationLearned then return end
+    Orbit.CooldownLearn:RequestOnce("tracked:" .. record.id .. ":" .. tostring(key), watch, function(duration)
+        data.activeDuration = duration
+        data.activeDurationLearned = true
+        local frame = self.containers[record.id]
+        if frame then self:ApplySettings(frame) end
+    end)
 end
 
 function Plugin:GetFrameBySystemIndex(systemIndex)

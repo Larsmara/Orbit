@@ -71,14 +71,13 @@ local function Create(container, preview, key, source, data)
     local fontPath, fontSize, fontFlags = source:GetFont()
     local flags = (fontFlags and fontFlags ~= "") and fontFlags or Orbit.Skin:GetFontOutline()
     if fontPath and fontSize then
-        visual:SetFont(fontPath, fontSize, flags)
+        Orbit.Skin:SetFontWithShadow(visual, fontPath, fontSize, flags)
     else
         local globalFontName = Orbit.db.GlobalSettings.Font
         local fallbackPath = LSM:Fetch("font", globalFontName) or Orbit.Constants.Settings.Font.FallbackPath
         local fallbackSize = Orbit.Constants.UI.UnitFrameTextSize or 12
-        visual:SetFont(fallbackPath, fallbackSize, Orbit.Skin:GetFontOutline())
+        Orbit.Skin:SetFontWithShadow(visual, fallbackPath, fallbackSize)
     end
-    Orbit.Skin:ApplyFontShadow(visual)
 
     local overrides = data and data.overrides
     if overrides then

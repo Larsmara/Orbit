@@ -51,8 +51,7 @@ local function GetFontOutline() return Orbit.Skin:GetFontOutline() end
 local function GetBorderSize()  return Orbit.db.GlobalSettings.BorderSize end
 
 local function SetTextFont(fs, size)
-    fs:SetFont(GetFont(), size, GetFontOutline())
-    Orbit.Skin:ApplyFontShadow(fs)
+    Orbit.Skin:SetFontWithShadow(fs, GetFont(), size, GetFontOutline())
 end
 
 local function GetClassColorRGBA(classFilename)
@@ -678,8 +677,7 @@ local function LayoutBars(frame, def)
     frame:SetSize(width, count * barHeightPx + math.max(0, count - 1) * barGapPx)
     RefreshBorders(frame, def)
     RefreshBackgrounds(frame, def)
-    frame._title:SetFont(titleFont, def.titleSize, titleOutline)
-    Orbit.Skin:ApplyFontShadow(frame._title)
+    Orbit.Skin:SetFontWithShadow(frame._title, titleFont, def.titleSize, titleOutline)
     AttachCanvasComponents(frame)
 end
 

@@ -86,9 +86,7 @@ function OverrideUtils.ApplyFontOverrides(element, overrides, defaultSize, baseF
     end
 
     if fontPath and fontSize then
-        local flags = Orbit.Skin:GetFontOutline()
-        element:SetFont(fontPath, fontSize, flags)
-        Orbit.Skin:ApplyFontShadow(element)
+        Orbit.Skin:SetFontWithShadow(element, fontPath, fontSize)
     end
 end
 

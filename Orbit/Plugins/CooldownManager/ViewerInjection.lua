@@ -4,6 +4,8 @@ local OrbitEngine = Orbit.Engine
 local Constants = Orbit.Constants
 local CooldownUtils = OrbitEngine.CooldownUtils
 local DragDrop = Orbit.CooldownDragDrop
+local GC = OrbitEngine.GlowController
+local ACTIVE_GLOW_KEY = "orbitActive"
 
 -- [ CONSTANTS ] -------------------------------------------------------------------------------------
 local ESSENTIAL_INDEX = Constants.Cooldown.SystemIndex.Essential
@@ -17,9 +19,6 @@ local DROP_ZONE_TICK_RATE = 0.05
 local GLOW_COLOR_R, GLOW_COLOR_G, GLOW_COLOR_B = 0, 1, 0
 local PREVIEW_ALPHA = 0.5
 local CURSOR_POLL_INTERVAL = 0.1
-
--- [ SPELL OVERRIDE ALIAS ] --------------------------------------------------------------------------
-local function GetActiveSpellID(spellID) return FindSpellOverrideByID(spellID) end
 
 -- [ MODULE ] ----------------------------------------------------------------------------------------
 Orbit.ViewerInjection = {}
@@ -77,7 +76,7 @@ local function CreateInjectedIcon(parent, systemIndex)
     chargeCount:SetFrameLevel(icon:GetFrameLevel() + Constants.Levels.IconOverlay)
     local chargeText = chargeCount:CreateFontString(nil, "OVERLAY", "GameFontHighlight", 7)
     chargeText:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -2, 2)
-    chargeText:SetFont(STANDARD_TEXT_FONT, 12, Orbit.Skin:GetFontOutline())
+    Orbit.Skin:SetFontWithShadow(chargeText, STANDARD_TEXT_FONT, 12)
     chargeCount.Current = chargeText
     icon.ChargeCount = chargeCount
     chargeCount:Hide()
@@ -87,7 +86,7 @@ local function CreateInjectedIcon(parent, systemIndex)
     icon:SetScript("OnReceiveDrag", function(self) Injection:OnIconReceiveDrag(self) end)
     icon:SetScript("OnMouseDown", function(self, button)
         if button == "RightButton" and IsShiftKeyDown() then
-            Injection:RemoveInjectedIcon(self)
+            Injection:OpenGlowMenu(self)
         elseif GetCursorInfo() then
             Injection:OnIconReceiveDrag(self)
         end
@@ -143,7 +142,7 @@ function Injection:UpdateIcon(icon)
 
     local texture
     if icon.trackedType == "spell" then
-        local activeId = GetActiveSpellID(icon.trackedId)
+        local activeId = Orbit.CooldownData:GetActiveSpellID(icon.trackedId)
         if not IsSpellKnown(icon.trackedId) and not IsPlayerSpell(icon.trackedId) then
             if activeId == icon.trackedId or (not IsSpellKnown(activeId) and not IsPlayerSpell(activeId)) then
                 icon:Hide(); return
@@ -275,6 +274,11 @@ function Injection:ReleaseFrame(systemIndex, frame)
     frame.trackedType = nil
     frame.trackedId = nil
     frame.useSpellId = nil
+    frame._glowEntry = nil
+    frame._activeGlowExpiry = nil
+    GC:Hide(frame, ACTIVE_GLOW_KEY)
+    Orbit.SpellGlows:UnregisterProc(frame)
+    Orbit.IconCastState:Untrack(frame)
     frame.Cooldown:Clear()
     frame.ActiveCooldown:Clear()
     frame.ChargeCount:Hide()
@@ -304,10 +308,32 @@ function Injection:RefreshFrames(systemIndex)
             frame:SetParent(parent)
         end
         frame.systemIndex = systemIndex
+        if frame.trackedId ~= data.id then
+            frame._activeGlowExpiry = nil
+            GC:Hide(frame, ACTIVE_GLOW_KEY)
+        end
         frame.trackedType = data.type
         frame.trackedId = data.id
         frame.useSpellId = data.useSpellId
+        self:RequestActiveDurationLearn(systemIndex, data)
         frame.activeDuration = data.activeDuration
+        frame._glowEntry = data
+        frame._activeGlowTypeName, frame._activeGlowOptions = Orbit.SpellGlows:BuildGlowOptions(data.glows and data.glows.active, ACTIVE_GLOW_KEY, Constants.Glow.DefaultColor)
+        if data.type == "spell" then
+            Orbit.SpellGlows:RegisterProc(frame, function() return frame.trackedId end, function(cond)
+                local entry = frame._glowEntry
+                local t = entry and entry.glows and entry.glows[cond]
+                if t ~= nil then return t end
+                if cond == "proc" then return Plugin:GetSetting(frame.systemIndex, "ProcGlowType") end
+            end, function(cond)
+                local entry = frame._glowEntry
+                return entry and entry.alerts and entry.alerts[cond]
+            end)
+            Orbit.IconCastState:Track(frame, function() return frame.trackedId end)
+        else
+            Orbit.SpellGlows:UnregisterProc(frame)
+            Orbit.IconCastState:Untrack(frame)
+        end
         frame.injectedIndex = i
         frame.afterNativeIndex = data.afterNativeIndex or 0
         self:UpdateIcon(frame)
@@ -322,6 +348,59 @@ function Injection:RefreshFrames(systemIndex)
             end
         end)
     end
+end
+
+-- [ ACTIVE DURATION LEARN ] -------------------------------------------------------------------------
+-- Spell-only: override/tooltip resolve synchronously, else a one-shot aura watch fills activeDuration on first application (same pipeline as Tracked).
+function Injection:RequestActiveDurationLearn(systemIndex, data, force)
+    if not data or data.type ~= "spell" or not data.id then return end
+    if not force and (data.activeDuration ~= nil or data.activeDurationLearned) then return end
+    local value, watch = Orbit.CooldownData:ResolveActiveDuration(data.id)
+    if value ~= nil then
+        data.activeDuration = value
+        return
+    end
+    if not watch or data.activeDurationLearned then return end
+    Orbit.CooldownLearn:RequestOnce("inject:" .. systemIndex .. ":" .. tostring(data.id), watch, function(duration)
+        local items = self:GetInjectedItems(systemIndex)
+        local changed = false
+        for _, e in ipairs(items) do
+            if e.type == "spell" and e.id == data.id and not e.activeDurationLearned then
+                e.activeDuration = duration
+                e.activeDurationLearned = true
+                changed = true
+            end
+        end
+        if changed then
+            self:SetInjectedItems(systemIndex, items)
+            self:RefreshFrames(systemIndex)
+        end
+    end)
+end
+
+-- [ GLOW MENU ] -------------------------------------------------------------------------------------
+function Injection:OpenGlowMenu(icon)
+    local entry = icon._glowEntry
+    if not entry then return end
+    Orbit.SpellGlows:OpenMenu(icon, {
+        id = entry.id,
+        itemType = entry.type,
+        supported = { proc = true, active = true },
+        get = function(cond) return entry.glows and entry.glows[cond] end,
+        set = function(cond, t)
+            entry.glows = entry.glows or {}
+            entry.glows[cond] = t
+            Injection:SetInjectedItems(icon.systemIndex, Injection:GetInjectedItems(icon.systemIndex))
+            if not InCombatLockdown() then Injection:RefreshFrames(icon.systemIndex) end
+        end,
+        getAlert = function(cond) return entry.alerts and entry.alerts[cond] end,
+        setAlert = function(cond, v)
+            entry.alerts = entry.alerts or {}
+            entry.alerts[cond] = v
+            Injection:SetInjectedItems(icon.systemIndex, Injection:GetInjectedItems(icon.systemIndex))
+        end,
+        removeCallback = function() if not InCombatLockdown() then Injection:RemoveInjectedIcon(icon) end end,
+    })
 end
 
 -- [ PUBLIC API ] ------------------------------------------------------------------------------------
@@ -378,10 +457,13 @@ function Injection:StartUpdateTicker()
     local nextUpdate = 0
     local frame = CreateFrame("Frame")
     frame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+    frame:RegisterEvent("SPELL_UPDATE_CHARGES")
     frame:RegisterEvent("BAG_UPDATE_COOLDOWN")
     frame:RegisterEvent("BAG_UPDATE")
     frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
     frame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+    -- Charge/stack counts also change from aura applications with no cooldown event; native icons refresh on UNIT_AURA, injected ones must too.
+    frame:RegisterUnitEvent("UNIT_AURA", "player")
     frame:SetScript("OnEvent", function(_, event, unit, _, spellId)
         if event == "PLAYER_EQUIPMENT_CHANGED" then
             Injection:OnEquipmentChanged()
@@ -414,13 +496,21 @@ function Injection:OnSpellCast(spellId)
             for _, icon in ipairs(frames) do
                 local isMatch = (icon.trackedType == "spell" and icon.trackedId == spellId)
                     or (icon.trackedType == "item" and icon.useSpellId == spellId)
-                if isMatch and icon.activeDuration then
-                    icon._activeGlowExpiry = GetTime() + icon.activeDuration
-                    local expectedId = icon.trackedId
-                    C_Timer.After(icon.activeDuration, function()
-                        if icon.trackedId ~= expectedId then return end
-                        icon._activeGlowExpiry = nil
-                    end)
+                if isMatch then
+                    local alerts = icon._glowEntry and icon._glowEntry.alerts
+                    if alerts and alerts.active then Orbit.SpellGlows:FireAlert(alerts.active, icon.trackedId) end
+                    if icon.activeDuration then
+                        icon._activeGlowExpiry = GetTime() + icon.activeDuration
+                        if icon._activeGlowTypeName then GC:Show(icon, ACTIVE_GLOW_KEY, icon._activeGlowTypeName, icon._activeGlowOptions) end
+                        local expectedId = icon.trackedId
+                        C_Timer.After(icon.activeDuration, function()
+                            if icon.trackedId ~= expectedId then return end
+                            -- A recast before this fires pushed _activeGlowExpiry later; let that newer timer clear it.
+                            if icon._activeGlowExpiry and GetTime() < icon._activeGlowExpiry then return end
+                            icon._activeGlowExpiry = nil
+                            GC:Hide(icon, ACTIVE_GLOW_KEY)
+                        end)
+                    end
                 end
             end
         end

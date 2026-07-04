@@ -1,7 +1,7 @@
 local _, Orbit = ...
 
 -- [ DEFAULT PROFILE ]--------------------------------------------------------------------------------
--- Layout-only seed (positions, per-instance state, GlobalSettings) — not per-setting defaults; see Core/Plugin/README.md "default values".
+-- Layout-only seed (positions, per-instance state, GlobalSettings) — not per-setting defaults; see Core/Plugin/README.md.
 Orbit.Profile = Orbit.Profile or {}
 Orbit.Profile.defaults = {
     Layouts = {

@@ -1,27 +1,25 @@
-# extras
+# Extras
 
-small, standalone plugins that do not fit into a larger bounded context.
+## Description
+Small, standalone single-file plugins that do not fit a larger bounded context.
 
-## purpose
+## Purpose
+Self-contained HUD features too small to justify their own domain folder. If a file here grows to need siblings, promote it to its own domain directory instead of expanding this folder.
 
-self-contained features that enhance the hud but aren't big enough to justify their own domain folder. if a file here grows to need siblings, promote it to its own domain directory instead of expanding this folder.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| TalkingHead.lua | reskins and repositions the talking head npc dialog frame. |
-| MinimapButton.lua | custom animated launcher icon. Standard edit-mode frame (UIParent-parented, draggable in Edit Mode). Layered atlases: black round-masked backdrop, ChallengeMode circle glow, rotating round-masked Darktrait-Glow, rotating UF-Arcane orb, hover-pulse UF-Arcane OuterFX, looping rotating round-masked shop-toast sparkles, and a static rotating dragonriding sgvigor burst. Left-click toggles Edit Mode + Global options; right-click opens advanced settings. Listed in `PLUGIN_GROUPS` as "Minimap Button". Single setting: Scale (50–150%). Position persisted via the standard Orbit `AttachSettingsListener` / `RestorePosition` flow. |
+| TalkingHead.lua | `Orbit_TalkingHead` — reskins and repositions the talking head dialog |
+| MinimapButton.lua | `Orbit_MinimapButton` — animated Orbit launcher button |
 
-## adding a new extras plugin
+TalkingHead creates a `UIParent`-parented container and hooks `TalkingHeadFrame_PlayCurrent` once `Blizzard_TalkingHeadUI` loads (immediately if already loaded, otherwise via its own `ADDON_LOADED` watcher). MinimapButton is a standard Edit Mode frame (draggable, layered animated atlases); left-click toggles Edit Mode via `securecall("Show/HideUIPanel", EditModeManagerFrame)` plus the Global options dialog, right-click opens advanced settings, and its single setting is Scale. Both persist position through the standard `OrbitEngine.Frame:AttachSettingsListener` / `RestorePosition` flow and register with `defaults` inline in `RegisterPlugin`.
 
-1. create a new lua file in this directory
-2. register via `Orbit:RegisterPlugin("New Extra", SYSTEM_ID, { defaults = { ... }, OnLoad = function(self) ... end })`
-3. keep it self-contained. if it grows to need multiple files, promote it to its own domain directory
-4. declare plugin schema defaults inline in the `defaults = { ... }` block of the options table passed to `RegisterPlugin`. Do not edit `DefaultProfile.lua` — that file is a saved-layout snapshot owned by ProfileManager, not the plugin-schema default site.
-5. add the new file to the extras module's `.xml` bundle as a `<Script file="NewFile.lua"/>` entry; ensure it loads after its dependencies
+There is no `Extras.xml` bundle — each file is listed directly in `Orbit.toc`. A new extras plugin means a new `.toc` line.
 
-## rules
+## Gotchas
+- Extras plugins must not depend on other plugins, and must stay one file — promote to a domain directory the moment a second file is needed.
+- Schema defaults go in the `RegisterPlugin` `defaults` block, never `DefaultProfile.lua` (that file is a ProfileManager-owned layout snapshot).
 
-- extras plugins must not depend on other plugins
-- if an extras plugin grows to need multiple files, promote it to its own domain directory
+## References
+- `Plugins/README.md` — full new-plugin checklist.
+- Skills: `/wow-frames`.

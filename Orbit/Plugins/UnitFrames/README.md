@@ -1,66 +1,28 @@
-# unit frames
+# UnitFrames
 
-player, target, and focus unit frames with their associated sub-frames.
+## Description
+Player, target, and focus unit frames plus their extensions: power bars, class resource bar, cast bars, buffs/debuffs, pet frame, and target-of-target / target-of-focus.
 
-## purpose
+## Purpose
+Displays the three primary singleton unit frames. Every extension is a standalone plugin rather than an embedded child, so each manages its own frame, settings schema, and Edit Mode entry while the parent frame plugin governs whether it is enabled.
 
-displays the three primary singleton unit frames (player, target, focus) and their extensions: power bars, resource bars, buffs, debuffs, target-of-target, and pet frames.
+## Implementation
+Three unit directories (`Player/`, `Target/`, `Focus/`), each with its own XML bundle setting load order. Every file registers its own plugin via `Orbit:RegisterPlugin` (e.g. `Orbit_TargetFrame`, `Orbit_FocusCastBar`). Main frames (`PlayerFrame.lua`, `TargetFrame.lua`, `FocusFrame.lua`) mix in `Orbit.UnitFrameMixin` + `VisualsExtendedMixin` + `StatusIconMixin` (player adds `AggroIndicatorMixin`) and create their secure frame through `OrbitEngine.UnitButton:Create` from Core/UnitDisplay. Power bars mix in `Orbit.UnitPowerBarMixin` and cast bars `Orbit.CastBarMixin`, both taking `sharedDefaults` from the mixin. Buffs/debuffs mix in `Orbit.AuraMixin` + `Orbit.UnitAuraGridMixin` and build through `CreateAuraGridPlugin`; `PlayerBuffs.lua` reuses Blizzard's `BuffFrame` buttons (`useBlizzardButtons`, `NativeFrame:KeepAliveHidden`). ToT/ToF use `Orbit.SecondaryUnitFrameMixin`. `Player/` additionally owns the class resource bar (`PlayerResources.lua` with `ContinuousBarRenderer.lua` / `DiscreteBarRenderer.lua` strategies, constants and settings split into their own files).
 
-## directory structure
+Sub-frame enablement is parent-owned: each sub-plugin's `IsEnabled()` reads the parent frame plugin's setting via `Orbit:ReadPluginSetting` (e.g. `Orbit_FocusFrame` → `EnableDebuffs`); `PlayerBuffs` is always enabled.
 
-```
-UnitFrames/
-  Player/
-    Player.xml                   -- load-order bundle for Player/
-    PlayerFrame.lua              -- player health frame
-    PlayerPower.lua              -- player power bar (mana/energy/rage)
-    PlayerResources.lua          -- class resource bar (combo points, holy power, etc.)
-    PlayerResourceSettings.lua   -- resource bar settings schema
-    PlayerResourceConstants.lua  -- resource bar constants
-    ContinuousBarRenderer.lua    -- continuous bar rendering strategy (smooth fill)
-    DiscreteBarRenderer.lua      -- discrete bar rendering strategy (segmented pips)
-    PlayerPetFrame.lua           -- player pet frame
-    PlayerCastBar.lua            -- player cast bar
-    PlayerBuffs.lua              -- player buff display
-    PlayerDebuffs.lua            -- player debuff display
-  Target/
-    Target.xml                   -- load-order bundle for Target/
-    TargetFrame.lua              -- target health frame
-    TargetBuffs.lua              -- target buff display
-    TargetDebuffs.lua            -- target debuff display
-    TargetOfTargetFrame.lua      -- target-of-target sub-frame
-    TargetCastBar.lua            -- target cast bar
-    TargetPower.lua              -- target power bar
-  Focus/
-    Focus.xml                    -- load-order bundle for Focus/
-    FocusFrame.lua               -- focus health frame
-    FocusBuffs.lua               -- focus buff display
-    FocusDebuffs.lua             -- focus debuff display
-    TargetOfFocusFrame.lua       -- focus-target sub-frame
-    FocusCastBar.lua             -- focus cast bar
-    FocusPower.lua               -- focus power bar
-```
+## Gotchas
+- Player/Target/Focus share the structural template but drift exists (`Player/` has the resource/renderer subsystems). Adding a feature to one — check whether all three need it.
+- Declare schema defaults inline in the `defaults = { … }` block passed to `RegisterPlugin`. Never edit `DefaultProfile.lua` — it is a saved-layout snapshot owned by ProfileManager, not the plugin-schema default site.
+- New cast bars must use `CastBarMixin`. Known divergence: `PlayerCastBar.lua` (and `BossFrameCastBar.lua`) predate the rule and reimplement the update loop — tracked technical debt, don't copy them.
+- `PlayerBuffs` sets `SetCVar("buffDurations", 0)` on load and restores it on logout/disable — Blizzard's own duration text would double up with Orbit's.
+- Target/focus frames must handle rapid unit changes gracefully (no stale data flash).
+- Shared behavior belongs in Core/UnitDisplay mixins, not duplicated per unit.
 
-## how it works
+## Secrets
+Health/power values flow only into StatusBar sinks via the Core/UnitDisplay mixins. `ContinuousBarRenderer.lua` is the model: mana color resolves through `UnitPowerPercent` with a native ColorCurve (`OrbitEngine.ColorCurve:ToNativeColorCurve`, gated by `SecretValueUtils.CanUseUnitPowerPercent`, called under pcall as a throwing C API); all other progress math is guarded with `issecretvalue(current/max)` before any division. Cast bar and resource coloring are ColorCurve-driven (`*ColorCurve` settings keys), never Lua arithmetic on unit values.
 
-each unit frame type (player, target, focus) follows the same pattern:
-
-1. main frame registers as a plugin and creates the health frame
-2. sub-frames (power, cast bar, buffs, debuffs) register as separate plugins
-3. sub-frames manage their own enabled state independently
-4. all frames use `UnitButton` from core/unitdisplay for secure targeting
-
-## adding a new sub-frame
-
-1. create the sub-frame file in the appropriate unit directory
-2. register it as a separate plugin
-3. share behavior via core/unitdisplay mixins (e.g., `UnitPowerBarMixin`, `CastBarMixin`)
-4. declare plugin schema defaults inline in the `defaults = { ... }` block of the options table passed to `RegisterPlugin`. Do not edit `DefaultProfile.lua` — that file is a saved-layout snapshot owned by ProfileManager, not the plugin-schema default site.
-
-## rules
-
-- Player/Target/Focus share the structural template — some drift exists (`Player/` has additional buff/debuff/resource subsystems). if you add a feature to one, check if it should be added to all three.
-- sub-frames (buffs, debuffs, power) are standalone plugins, not embedded in the parent
-- sub-frame enable/disable is controlled by the parent plugin's settings
-- new cast bars must use `CastBarMixin`, not duplicate the update loop. **known divergence:** `PlayerCastBar.lua` and `BossFrameCastBar.lua` predate the consolidation rule and currently reimplement the cast-bar update loop. Consolidating into `CastBarMixin` is tracked technical debt — until then, treat the rule as "new cast bars MUST use CastBarMixin; existing reimplementations are technical debt."
-- target/focus frames must handle rapid unit changes gracefully (no stale data flash)
+## References
+- `Core/UnitDisplay/` — `UnitButton`, `UnitFrameMixin`, `UnitPowerBarMixin`, `CastBarMixin`, `AuraMixin`, `UnitAuraGridMixin`, `SecondaryUnitFrameMixin`.
+- `Plugins/BossFrames/` — the other cast-bar reimplementation named in the tech-debt note.
+- Skills: `/wow-secrets` (curves, `UnitPowerPercent`), `/wow-filters` (buff/debuff filtering), `/wow-frames` (secure unit buttons).

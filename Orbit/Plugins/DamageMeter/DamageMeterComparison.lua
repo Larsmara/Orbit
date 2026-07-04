@@ -110,8 +110,7 @@ local function GetFontOutline()
 end
 
 local function SetTextFont(fs, size)
-    fs:SetFont(GetFont(), size, GetFontOutline())
-    if Orbit.Skin then Orbit.Skin:ApplyFontShadow(fs) end
+    if Orbit.Skin then Orbit.Skin:SetFontWithShadow(fs, GetFont(), size, GetFontOutline()) end
 end
 
 -- [ CANDIDATE ENUMERATION ] -------------------------------------------------------------------------

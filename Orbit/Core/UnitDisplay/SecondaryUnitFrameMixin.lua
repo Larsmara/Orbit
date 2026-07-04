@@ -131,8 +131,7 @@ function Mixin:ApplySettings()
     local fontPath = LSM:Fetch("font", Orbit.db.GlobalSettings.Font) or "Fonts\\FRIZQT__.TTF"
     if frame.Name then
         local h = frame:GetHeight()
-        frame.Name:SetFont(fontPath, 10, Orbit.Skin:GetFontOutline())
-        Orbit.Skin:ApplyFontShadow(frame.Name)
+        Orbit.Skin:SetFontWithShadow(frame.Name, fontPath, 10)
         frame.Name:ClearAllPoints()
         frame.Name:SetPoint("CENTER", 0, 0)
         frame.Name:SetJustifyH("CENTER")

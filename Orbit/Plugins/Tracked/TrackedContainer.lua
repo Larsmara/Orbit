@@ -41,9 +41,6 @@ local BuildPhaseCurve = function(activeDuration, cooldownDuration)
     return curve
 end
 
--- [ SPELL OVERRIDE ALIAS ] --------------------------------------------------------------------------
-local function GetActiveSpellID(spellID) return FindSpellOverrideByID(spellID) end
-
 -- [ MODULE ] ----------------------------------------------------------------------------------------
 Orbit.TrackedContainer = {}
 local Container = Orbit.TrackedContainer
@@ -162,7 +159,7 @@ function Container:Apply(plugin, frame, record)
     local minX, maxX, minY, maxY, hasItems = self:ComputeBounds(grid)
 
     for key, icon in pairs(frame.iconItems) do
-        if not grid[key] then icon:Hide() end
+        if not grid[key] then self:ReleaseIconState(icon) end
     end
 
     -- Cache per-container settings once for all icons.
@@ -174,22 +171,61 @@ function Container:Apply(plugin, frame, record)
     if GU then glowTypeName, glowOptions = GU:BuildOptions(plugin, record.id, "ActiveGlow", Constants.Glow.DefaultColor, "orbitActive") end
 
     for key, data in pairs(grid) do
+        plugin:RequestActiveDurationLearn(record, key, data)
         local icon = frame.iconItems[key] or self:AcquireIcon(plugin, frame, key)
+        local prevId = icon.trackedId
         icon.trackedType = data.type
         icon.trackedId = data.id
+        -- Reused cell now holds a different spell: clear last state so a ready icon doesn't fire a spurious ready-flash, and drop the previous occupant's active glow.
+        if prevId ~= data.id then
+            icon._lastState = nil
+            icon._activeGlowExpiry = nil
+            OrbitEngine.GlowController:Hide(icon, "orbitActive")
+        end
         icon._activeDuration = data.activeDuration
         icon._cooldownDuration = data.cooldownDuration
         icon._useSpellId = data.useSpellId
         icon._showGCDSwipe = showGCDSwipe
         icon._hideOnCooldown = hideOnCd
         icon._hideOnAvailable = hideOnReady
-        icon._activeGlowTypeName = glowTypeName
-        icon._activeGlowOptions = glowOptions
+        icon._glowEntry = data
+        -- Per-icon active glow (set via shift-right-click menu) overrides the container default; a per-icon colour tints either.
+        local activeGlowType = data.glows and data.glows.active
+        local activeColor = data.glowColors and data.glowColors.active
+        if activeGlowType ~= nil then
+            icon._activeGlowTypeName, icon._activeGlowOptions = Orbit.SpellGlows:BuildGlowOptions(activeGlowType, "orbitActive", activeColor or Constants.Glow.DefaultColor)
+        elseif activeColor and glowOptions then
+            icon._activeGlowTypeName, icon._activeGlowOptions = GU:BuildOptionsFromLookup(function(k)
+                if k == "ActiveGlowColor" then return activeColor end
+                return plugin:GetSetting(record.id, k)
+            end, "ActiveGlow", Constants.Glow.DefaultColor, "orbitActive")
+        else
+            icon._activeGlowTypeName = glowTypeName
+            icon._activeGlowOptions = glowOptions
+        end
+        icon._openGlowMenu = icon._openGlowMenu or function(ic) Container:OpenIconGlowMenu(plugin, frame, ic) end
+        if data.type == "spell" then
+            Orbit.SpellGlows:RegisterProc(icon, function() return icon.trackedId end,
+                function(cond)
+                    local entry = icon._glowEntry
+                    return entry and entry.glows and entry.glows[cond]
+                end,
+                function(cond)
+                    local entry = icon._glowEntry
+                    return entry and entry.alerts and entry.alerts[cond]
+                end,
+                function(cond)
+                    local entry = icon._glowEntry
+                    return entry and entry.glowColors and entry.glowColors[cond]
+                end)
+        else
+            Orbit.SpellGlows:UnregisterProc(icon)
+        end
         -- Charge spell detection
         if data.type == "spell" then
             local isCharge, ci = DragDrop:IsChargeSpell(data.id)
             icon._isChargeSpell = isCharge
-            icon._maxCharges = ci and ci.maxCharges or nil
+            icon._maxCharges = (ci and ci.maxCharges and not issecretvalue(ci.maxCharges)) and ci.maxCharges or nil
         else
             icon._isChargeSpell = false
             icon._maxCharges = nil
@@ -206,6 +242,9 @@ function Container:Apply(plugin, frame, record)
         Orbit.TrackedIconItem:ApplySwipeColor(plugin, icon, record.id)
         Orbit.TrackedIconItem:ApplyCanvasComponents(plugin, icon, record.id)
         Orbit.TrackedIconItem:Update(icon)
+        if data.type == "spell" then
+            Orbit.IconCastState:Track(icon, function() return icon.trackedId end)
+        end
     end
 
     local extMinX, extMaxX, extMinY, extMaxY = minX, maxX, minY, maxY
@@ -305,7 +344,7 @@ function Container:ComputeBounds(grid)
 end
 
 -- [ DROP ZONE EDGE EXPANSION ] ----------------------------------------------------------------------
--- Find empty cardinal neighbors of grid items; blocked directions prevent growth into anchored edges.
+-- Find empty 8-way neighbors (4 cardinal + 4 diagonal) of grid items; blocked directions prevent growth into anchored edges.
 function Container:ComputeEdgePositions(frame, grid, minX, maxX, minY, maxY, hasItems)
     local positions = {}
     if not hasItems then
@@ -328,6 +367,10 @@ function Container:ComputeEdgePositions(frame, grid, minX, maxX, minY, maxY, has
             if not blockRight then neighbors[#neighbors + 1] = { x + 1, y } end
             if not blockTop then neighbors[#neighbors + 1] = { x, y - 1 } end
             if not blockBottom then neighbors[#neighbors + 1] = { x, y + 1 } end
+            if not (blockLeft or blockTop) then neighbors[#neighbors + 1] = { x - 1, y - 1 } end
+            if not (blockRight or blockTop) then neighbors[#neighbors + 1] = { x + 1, y - 1 } end
+            if not (blockLeft or blockBottom) then neighbors[#neighbors + 1] = { x - 1, y + 1 } end
+            if not (blockRight or blockBottom) then neighbors[#neighbors + 1] = { x + 1, y + 1 } end
             for _, n in ipairs(neighbors) do
                 local nx, ny = n[1], n[2]
                 local nKey = GridKey(nx, ny)
@@ -367,6 +410,8 @@ function Container:GetBlockedDirections(frame)
 end
 
 -- [ ICON ITEM POOLING ] -----------------------------------------------------------------------------
+local GLOW_SUPPORTED = { proc = true, active = true }
+
 function Container:AcquireIcon(plugin, frame, key)
     local icon = Orbit.TrackedIconItem:Build(frame, function(removedIcon)
         Container:RemoveIconAt(plugin, frame, removedIcon)
@@ -375,18 +420,50 @@ function Container:AcquireIcon(plugin, frame, key)
     return icon
 end
 
+-- Emptied cells must drop their live registrations or the next occupant (or a hidden orphan) inherits tint/glow/alert state and keeps range checks enabled.
+function Container:ReleaseIconState(icon)
+    icon:Hide()
+    icon.trackedId = nil
+    icon.trackedType = nil
+    icon._glowEntry = nil
+    icon._lastState = nil
+    icon._activeGlowExpiry = nil
+    OrbitEngine.GlowController:Hide(icon, "orbitActive")
+    Orbit.SpellGlows:UnregisterProc(icon)
+    Orbit.IconCastState:Untrack(icon)
+end
+
 function Container:RemoveIconAt(plugin, frame, icon)
     local record = plugin:GetContainerRecord(frame.recordId)
     if not record then return end
     for key, candidate in pairs(frame.iconItems) do
         if candidate == icon then
             record.grid[key] = nil
-            icon:Hide()
+            self:ReleaseIconState(icon)
             frame.iconItems[key] = nil
             break
         end
     end
     Container:Apply(plugin, frame, record)
+end
+
+function Container:OpenIconGlowMenu(plugin, frame, icon)
+    local entry = icon._glowEntry
+    if not entry then return end
+    local record = plugin:GetContainerRecord(frame.recordId)
+    Orbit.SpellGlows:OpenMenu(icon, {
+        id = entry.id,
+        itemType = entry.type,
+        supported = GLOW_SUPPORTED,
+        get = function(cond) return entry.glows and entry.glows[cond] end,
+        set = function(cond, t) entry.glows = entry.glows or {}; entry.glows[cond] = t end,
+        getAlert = function(cond) return entry.alerts and entry.alerts[cond] end,
+        setAlert = function(cond, v) entry.alerts = entry.alerts or {}; entry.alerts[cond] = v end,
+        getColor = function(cond) return entry.glowColors and entry.glowColors[cond] end,
+        setColor = function(cond, c) entry.glowColors = entry.glowColors or {}; entry.glowColors[cond] = c end,
+        onChange = function() if not InCombatLockdown() then Container:Apply(plugin, frame, record) end end,
+        removeCallback = function() if not InCombatLockdown() then Container:RemoveIconAt(plugin, frame, icon) end end,
+    })
 end
 
 -- [ DROP ZONES ] ------------------------------------------------------------------------------------
@@ -585,7 +662,7 @@ function Container:StartSpellCastWatcher(plugin, frame)
         end
         if unit ~= "player" then return end
         for _, icon in pairs(frame.iconItems) do
-            local activeId = (icon.trackedType == "spell") and GetActiveSpellID(icon.trackedId) or nil
+            local activeId = (icon.trackedType == "spell") and Orbit.CooldownData:GetActiveSpellID(icon.trackedId) or nil
             local isMatch = (icon.trackedType == "spell" and (icon.trackedId == spellId or activeId == spellId)) or (icon.trackedType == "item" and icon._useSpellId == spellId)
             if isMatch then
                 if icon._activeDuration then
@@ -593,11 +670,15 @@ function Container:StartSpellCastWatcher(plugin, frame)
                     local expectedId = icon.trackedId
                     C_Timer.After(icon._activeDuration, function()
                         if icon.trackedId ~= expectedId then return end
+                        -- A recast before this fires pushed _activeGlowExpiry later; let that newer timer clear it.
+                        if icon._activeGlowExpiry and GetTime() < icon._activeGlowExpiry then return end
                         local GC = OrbitEngine.GlowController
                         if GC:IsActive(icon, "orbitActive") then GC:Hide(icon, "orbitActive") end
                         icon._activeGlowExpiry = nil
                     end)
                 end
+                local alerts = icon._glowEntry and icon._glowEntry.alerts
+                if alerts and alerts.active then Orbit.SpellGlows:FireAlert(alerts.active, icon.trackedId) end
                 if icon._isChargeSpell then CooldownUtils:OnChargeCast(icon) end
             end
         end
@@ -606,20 +687,30 @@ function Container:StartSpellCastWatcher(plugin, frame)
 end
 
 -- [ ACTIVE DURATION REPARSE ] -----------------------------------------------------------------------
--- Re-reads tooltip durations after talent changes and rebuilds phase curves.
+-- After talent changes: re-resolve spell cooldowns from API + re-arm aura-learn; items still re-read from tooltip.
 function Container:ReparseActiveDurations(plugin, frame)
     local record = plugin:GetContainerRecord(frame.recordId)
     if not record or not record.grid then return end
     local changed = false
     for key, data in pairs(record.grid) do
         if data.id then
-            local parseId = (data.type == "spell") and GetActiveSpellID(data.id) or data.id
-            local newActDur = ParseActiveDuration(data.type, parseId)
-            local newCdDur = ParseCooldownDuration(data.type, parseId)
-            if newActDur ~= data.activeDuration or newCdDur ~= data.cooldownDuration then
-                data.activeDuration = newActDur
-                data.cooldownDuration = newCdDur
+            if data.type == "spell" then
+                local activeId = Orbit.CooldownData:GetActiveSpellID(data.id)
+                -- nil means the API had nothing (base cd 0, secret in combat) — keep the saved value rather than wiping a persisted record.
+                local newCdDur = Orbit.CooldownData:GetBaseCooldownSeconds(activeId) or ParseCooldownDuration("spell", activeId)
+                if newCdDur and newCdDur ~= data.cooldownDuration then data.cooldownDuration = newCdDur end
+                data.activeDurationLearned = nil
+                plugin:RequestActiveDurationLearn(record, key, data, true)
                 changed = true
+            else
+                local parseId = data.id
+                local newActDur = ParseActiveDuration("item", parseId)
+                local newCdDur = ParseCooldownDuration("item", parseId)
+                if newActDur ~= data.activeDuration or newCdDur ~= data.cooldownDuration then
+                    data.activeDuration = newActDur
+                    data.cooldownDuration = newCdDur
+                    changed = true
+                end
             end
         end
     end

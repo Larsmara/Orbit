@@ -4,7 +4,7 @@ local Orbit = Orbit
 local OrbitEngine = Orbit.Engine
 local L = Orbit.L
 
-local BUTTON_SIZE = 32
+local DEFAULT_ICON_SIZE = 34
 local FALLBACK_TEXTURE = "Interface\\Icons\\INV_Misc_QuestionMark"
 
 Orbit.ActionBarsPreview = {}
@@ -25,7 +25,9 @@ function ABPreview:Setup(plugin, container, systemIndex)
             end
         end
 
-        local preview = OrbitEngine.IconCanvasPreview:Create(self, options.parent or UIParent, BUTTON_SIZE, BUTTON_SIZE, iconTexture)
+        -- Mirror the live button geometry so previewed text lands where it will on the bar.
+        local iconSize = plugin:GetSetting(systemIndex, "IconSize") or DEFAULT_ICON_SIZE
+        local preview = OrbitEngine.IconCanvasPreview:Create(self, options.parent or UIParent, iconSize, iconSize, iconTexture)
         preview.systemIndex = systemIndex
 
         -- Resolve saved positions (global sync aware)
@@ -39,11 +41,12 @@ function ABPreview:Setup(plugin, container, systemIndex)
 
         local kbPreview = (C_GamePad and C_GamePad.IsEnabled and C_GamePad.IsEnabled()) and "|A:Gamepad_Gen_1_32:14:14|a" or "Q"
 
+        -- Font sizes match ActionBarsText live formulas (w = live button width) so the preview is WYSIWYG.
         OrbitEngine.IconCanvasPreview:AttachTextComponents(preview, {
-            { key = "Keybind", preview = kbPreview, anchorX = "RIGHT", anchorY = "TOP", offsetX = 2, offsetY = 2 },
-            { key = "MacroText", preview = L.PLU_AB_PREVIEW_MACRO, anchorX = "CENTER", anchorY = "BOTTOM", offsetX = 0, offsetY = 2 },
-            { key = "Timer", preview = "5", anchorX = "CENTER", anchorY = "CENTER", offsetX = 0, offsetY = 0 },
-            { key = "Stacks", preview = "3", anchorX = "LEFT", anchorY = "BOTTOM", offsetX = 2, offsetY = 2 },
+            { key = "Keybind", preview = kbPreview, anchorX = "RIGHT", anchorY = "TOP", offsetX = 2, offsetY = 2, fontSize = math.max(8, iconSize * 0.28) },
+            { key = "MacroText", preview = L.PLU_AB_PREVIEW_MACRO, anchorX = "CENTER", anchorY = "BOTTOM", offsetX = 0, offsetY = 2, fontSize = math.max(7, iconSize * 0.22) },
+            { key = "Timer", preview = "5", anchorX = "CENTER", anchorY = "CENTER", offsetX = 0, offsetY = 0, fontSize = math.max(10, iconSize * 0.35) },
+            { key = "Stacks", preview = "3", anchorX = "LEFT", anchorY = "BOTTOM", offsetX = 2, offsetY = 2, fontSize = math.max(8, iconSize * 0.28) },
         }, savedPositions, fontPath)
 
         return preview

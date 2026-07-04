@@ -64,7 +64,9 @@ end
 
 function Plugin:CurrencyRecord()
     local C = C_CurrencyInfo
-    if not C or not C.GetCurrencyInfo then return self:_AutoRecord() end
+    -- No trackable currency: an empty record so the resting stack falls through to the secondary (or hides), rather than silently swapping to auto XP/rep.
+    local emptyRecord = { mode = "currency", name = "", level = "", current = 0, max = 0, empty = true, color = self.FlourishColors.gold }
+    if not C or not C.GetCurrencyInfo then return emptyRecord end
     local id = self._activeCurrencyID
     local info = (id and id > 0) and C.GetCurrencyInfo(id) or nil
     if not info and C.GetBackpackCurrencyInfo then
@@ -73,7 +75,7 @@ function Plugin:CurrencyRecord()
         info = id and C.GetCurrencyInfo(id) or nil
     end
     local max = info and self:_CurrencyMax(info) or 0
-    if not info or max <= 0 then return self:_AutoRecord() end
+    if not info or max <= 0 then return emptyRecord end
     self._currencyID = id
     local cur = info.quantity or 0
     return { mode = "currency", name = info.name or "", level = tostring(cur), current = cur, max = max,

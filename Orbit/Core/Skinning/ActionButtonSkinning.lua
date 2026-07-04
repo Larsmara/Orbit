@@ -189,8 +189,7 @@ function ABS:ApplyKeybindText(button, settings, w, scale)
     local fontPath = LSM:Fetch("font", fontName) or Constants.Settings.Font.FallbackPath
     if button.HotKey then
         local fontSize = math.max(HOTKEY_MIN_SIZE, w * HOTKEY_FONT_SCALE)
-        button.HotKey:SetFont(fontPath, fontSize, Skin:GetFontOutline())
-        Skin:ApplyFontShadow(button.HotKey)
+        Skin:SetFontWithShadow(button.HotKey, fontPath, fontSize)
         button.HotKey:SetTextColor(1, 1, 1, 1)
         button.HotKey:ClearAllPoints()
         button.HotKey:SetPoint("TOPRIGHT", button, "TOPRIGHT", Pixel:Multiple(HOTKEY_OFFSET.x, scale), Pixel:Multiple(HOTKEY_OFFSET.y, scale))
@@ -198,8 +197,7 @@ function ABS:ApplyKeybindText(button, settings, w, scale)
 
     if button.Name then
         local fontSize = math.max(NAME_MIN_SIZE, w * NAME_FONT_SCALE)
-        button.Name:SetFont(fontPath, fontSize, Skin:GetFontOutline())
-        Skin:ApplyFontShadow(button.Name)
+        Skin:SetFontWithShadow(button.Name, fontPath, fontSize)
         if settings.hideName then button.Name:Hide()
         else
             button.Name:Show()

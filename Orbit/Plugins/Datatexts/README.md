@@ -1,76 +1,26 @@
-# datatexts
+# Datatexts
 
-free-floating datatext system. provides screen-corner-triggered drawer panels to place informational datatexts anywhere on screen. each datatext is a self-contained entry that can be enabled, dragged out of the drawer, repositioned freely, and styled by orbit's global font / texture / border settings.
+## Description
+Free-floating informational datatexts (fps, gold, durability, stats, social counts, and more) delivered through a corner-triggered sliding drawer. Each datatext can be dragged out of the drawer, positioned anywhere on screen, and styled by Orbit's global font/texture/border settings.
 
-## purpose
+## Purpose
+Successor to the old `MenuItems/Performance.lua` and `MenuItems/CombatTimer.lua`, expanded into a self-contained ecosystem. Datatexts are deliberately not Orbit plugins and have no Edit Mode integration — the drawer's open/closed state is the lock/unlock model (closed = locked, click/tooltip active; open = draggable).
 
-successor to the old `MenuItems/Performance.lua` and `MenuItems/CombatTimer.lua` plugins, expanded into a richer ecosystem with stats readouts, gameplay info, social, and utility datatexts. positions persist per-profile in `OrbitDB`.
+## Implementation
+`Datatexts.lua` registers the single plugin (`Orbit_Datatexts`) whose defaults hold the two persistence tables. `BaseDatatext.lua` is the base class (frame creation, drag, tooltip, click/scroll handlers, event registration); each file in `Elements/` extends `DT.BaseDatatext:New("Name")`, implements `Init()`, and calls `Register()` — load order is `Elements/Elements.xml`. `DatatextManager.lua` owns the registry, the shared update scheduler (ticker pools), category metadata, and persistence: positions in `datatextPositions` and per-datatext options (e.g. "only show in instance") in `datatextOptions`, both read/written through `plugin:Get/SetSetting(1, …)` so they travel with profile switches. `DatatextManager:ApplyInstanceVisibility` re-evaluates options on zone changes and drawer open/close. `DrawerUI.lua` creates the four 4×4 px invisible corner triggers (TOOLTIP strata) and the animated drawer panel, sorted alphabetically. `Util/` holds `Formatting.lua` (numbers/money/time, RingBuffer), `Graph.lua` (tooltip sparklines), and `Menu.lua` (context menus). `Elements/StatDatatext.lua` is the shared combat-rating scaffold that Crit/Haste/Mastery/Versatility build on.
 
-## directory structure
+To add a datatext: new file in `Elements/`, extend `BaseDatatext`, implement `Init()` (frame, update func, handlers, then `Register()`), add a `<Script>` line to `Elements/Elements.xml`.
 
-```
-Datatexts/
-  Datatexts.lua         -- plugin entry point (registration, lifecycle)
-  Datatexts.xml         -- load order bundle
-  BaseDatatext.lua      -- base class (frame creation, drag, tooltip, click, events)
-  DatatextManager.lua   -- registry, position persistence, update scheduler, category metadata
-  DrawerUI.lua          -- corner triggers, animated sliding drawer panel, lock/unlock. sorts datatexts alphabetically.
-  Util/
-    Formatting.lua      -- number / money / time formatting, RingBuffer
-    Graph.lua           -- sparkline line graph for tooltips
-    Menu.lua            -- context menu helper
-  Elements/
-    Elements.xml        -- datatext load manifest
-    Performance.lua     -- fps / latency / memory (system)
-    CombatTimer.lua     -- combat duration tracker (system)
-    Gold.lua            -- currency with cross-character tracking
-    Durability.lua      -- equipment durability
-    BagSpace.lua        -- bag free / total slots
-    Speed.lua           -- movement speed percentage
-    Haste.lua           -- haste percentage (character stat)
-    Crit.lua            -- crit percentage (character stat)
-    Versatility.lua     -- versatility percentage (character stat)
-    Mastery.lua         -- mastery percentage (character stat)
-    Location.lua        -- zone name with pvp coloring
-    Time.lua            -- local / realm time
-    Volume.lua          -- master volume with scroll adjust
-    Hearthstone.lua     -- hearthstone cooldown
-    Mail.lua            -- new mail indicator
-    Friends.lua         -- online friends count
-    Guild.lua           -- online guild members
-    ItemLevel.lua       -- equipped item level
-    Spec.lua            -- specialization display (all specs with loadout menu and flipbook FX)
-    Quest.lua           -- quest log count
-```
+## Gotchas
+- Hover tooltips must use the private `Orbit.Tooltip` frame, never the global `GameTooltip` — every file aliases `local GameTooltip = Orbit.Tooltip` at the top. Owning the global tooltip from addon code taints it and breaks Blizzard's secret-handling unit-tooltip pipeline (WoW 12.0+).
+- Datatexts are internal objects managed centrally by `DatatextManager` (position, enabled state) — never register one as an Orbit plugin or wire it into Edit Mode.
+- Each datatext file is self-contained; no cross-datatext dependencies.
+- Drag in the drawer moves non-secure frames C-side under the cursor; secure frames move on a combat-guarded frame-synced OnUpdate instead (`DrawerUI.lua`).
+- Strings go through `Orbit.L` with the `PLU_DT_*` prefix.
 
-## interaction model
+## Secrets
+Combat-rating stats route every operand through `Orbit.SecretValueUtils.NumericOrNil` before arithmetic — one secret operand poisons a sum (see `Elements/Versatility.lua`, which adds two ratings). The shared rating-side guard lives once in `StatDatatext.lua`; each stat's `getPercent` owns its percent guard. `Speed.lua` gates on `issecretvalue(speed)` before formatting. Hearthstone reads `C_Container.GetItemCooldown` and displays via cooldown-safe formatting.
 
-| drawer state | datatext drag | datatext tooltip / click |
-|---|---|---|
-| closed | locked | enabled — left-click runs the action, right-click opens the options menu (e.g. "Only Show in Instance") |
-| open | unlocked (draggable) | enabled |
-
-## corner triggers
-
-4×4 pixel invisible buttons at each screen corner (`TOOLTIP` strata). clicking any corner toggles the drawer.
-
-## persistence
-
-datatext positions are stored in `OrbitDB.Profiles[activeProfile].Orbit_Datatexts.datatextPositions`. positions travel with profile switches. per-datatext options (e.g. "only show in instance") live alongside them in `Orbit_Datatexts.datatextOptions`, evaluated by `DatatextManager:ApplyInstanceVisibility` on zone changes and drawer open/close.
-
-## adding a new datatext
-
-1. create a new lua file in `Elements/`
-2. extend `DT.BaseDatatext:New("DatatextName")`
-3. implement `Init()`: create the frame, set an update func, set any click/scroll handlers, then call `Register()`
-4. add a `<Script file="Elements/YourDatatext.lua"/>` line to `Elements/Elements.xml`
-
-## rules
-
-- datatexts are NOT orbit plugins. they are internal objects managed by `DatatextManager`.
-- no edit mode integration. the drawer handles lock / unlock state.
-- all constants at file top. no magic numbers.
-- each datatext file is self-contained. no cross-datatext dependencies.
-- datatext state (position, enabled) is managed centrally by `DatatextManager`.
-- user-visible strings go through `Orbit.L` (`PLU_DT_*` for datatext labels and tooltips).
-- hover tooltips use the private `Orbit.Tooltip` frame, never the global `GameTooltip`. each file aliases it at the top: `local GameTooltip = Orbit.Tooltip`. owning the global tooltip from addon code taints it and breaks Blizzard's secret-handling unit-tooltip pipeline (WoW 12.0+).
+## References
+- `Core/Shared/SecretValueUtils.lua` — `NumericOrNil`.
+- Skills: `/wow-secrets` (rating/speed guards), `/unsecreted`.

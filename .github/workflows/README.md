@@ -1,50 +1,42 @@
-# github actions — orbit
+# GitHub Actions workflows
 
-| file | trigger | purpose |
+## Description
+CI/CD for the Orbit repo: lint gates on every push/PR, automatic minor-version tagging, packaged releases to CurseForge, and a label-driven Claude bot that fixes issues on the `ai-develop` branch.
+
+## Purpose
+Orbit has no automated test suite, so these lints are the only pre-merge gate; the tag/release chain makes every merge to `main` ship to CurseForge without manual steps.
+
+## Implementation
+The stable pipeline is lint → auto-tag → release:
+
+| File | Trigger | Does |
 |---|---|---|
-| [`lint.yml`](lint.yml) | pr / push to `main` | four status checks: `check-localization.py`, `check-readmes.py`, `check-comments.py`, `check_mixin_freeze.py` |
-| [`auto-tag.yml`](auto-tag.yml) | push to `main` (paths: `Orbit/**`, `.scripts/**`, `.pkgmeta`, `CHANGELOG.md`) | bumps minor, pushes `X.Y` tag |
-| [`release.yml`](release.yml) | tag push `X.Y` / `X.Y.Z` / `X.Y-alpha.*` | bigwigs packager → curseforge (alpha or release channel by tag suffix) |
-| [`alpha-release.yml`](alpha-release.yml) | manual (`workflow_dispatch`) | tags `ai-develop` HEAD as `X.Y-alpha.<timestamp>` |
-| [`claude-issues.yml`](claude-issues.yml) | issue labeled `claude-approved` (owner only) | claude fixes the issue on `ai-develop`, maintains a rolling pr to `main` |
+| [`lint.yml`](lint.yml) | PR / push to `main` | four status checks: `check-localization.py`, `check-readmes.py`, `check-comments.py`, `check_mixin_freeze.py` |
+| [`auto-tag.yml`](auto-tag.yml) | push to `main` (paths: `Orbit/**`, `.scripts/**`, `.pkgmeta`, `CHANGELOG.md`) | bumps MINOR, pushes `X.Y` tag using `ORBIT_PAT` |
+| [`release.yml`](release.yml) | tag push `X.Y` / `X.Y.Z` (pattern also matches `X.Y-alpha.*`) | `update_changelog.py` (stable tags only) → BigWigs packager → CurseForge, alpha or release channel chosen by the tag suffix |
+| [`alpha-release.yml`](alpha-release.yml) | manual (`workflow_dispatch`) | tags `ai-develop` HEAD as `X.<next-minor>-alpha.<timestamp>`, which then flows through `release.yml` |
+| [`claude-issues.yml`](claude-issues.yml) | issue labeled `claude-approved` by the repo owner | syncs `ai-develop` ← `main`, runs `claude-code-action` to fix the issue, commits `fix(#N): …`, upserts the rolling PR `ai-develop → main`, removes the label; on failure comments the run URL and applies `claude-failed` |
 
-## versioning
+Versioning is `MAJOR.MINOR`: major is manual (`git tag -a 1.0 -m "..." && git push origin 1.0`), minor auto-bumps on every qualifying push to `main`.
 
-`MAJOR.MINOR` — major is manual (`git tag -a 1.0 -m "..." && git push origin 1.0`), minor auto-bumps on every qualifying push to `main`. alpha tags are filtered out when computing the next stable version.
+Repository secrets:
 
-## secrets
-
-| secret | used by | notes |
+| Secret | Used by | Notes |
 |---|---|---|
-| `ORBIT_PAT` | `auto-tag.yml`, `alpha-release.yml` | personal access token. **required** — default `GITHUB_TOKEN` won't trigger downstream `release.yml` on tag push. |
-| `CURSE_API_KEY` / `CF_API_KEY` | `release.yml` | curseforge upload auth |
-| `CLAUDE_CODE_OAUTH_TOKEN` | `claude-issues.yml` | generate via `claude setup-token`. consumes pro / max 5-hour quota — swap for `ANTHROPIC_API_KEY` if it bottlenecks. |
-| `CLAUDE_RULES` | `claude-issues.yml` | trimmed copy of project rules (the local `CLAUDE.md` without sub-addon refs / slash commands). up to 48 KB. |
+| `ORBIT_PAT` | `auto-tag.yml`, `alpha-release.yml`, `claude-issues.yml` (PR upsert) | personal access token — required because tags pushed with the default `GITHUB_TOKEN` do not trigger `release.yml` |
+| `CURSE_API_KEY` | `release.yml` (exported as `CF_API_KEY`) | CurseForge upload auth |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude-issues.yml` | generate via `claude setup-token`; consumes Pro/Max 5-hour quota — swap for an API key if it bottlenecks |
 
-## claude issue resolver
+Claude resolver one-time setup: create labels `claude-approved` / `claude-failed`, create the `ai-develop` branch from `main`, add `CLAUDE_CODE_OAUTH_TOKEN`, install [github.com/apps/claude](https://github.com/apps/claude), and enable "allow GitHub Actions to create and approve pull requests" in repo settings.
 
-**setup** (one-time):
+## Gotchas
+- Tag created but no release run → `ORBIT_PAT` expired. CurseForge upload fails → `CURSE_API_KEY` rotated. Claude run silently fails to start → label gate not satisfied (only the repo owner adding `claude-approved` counts) or the OAuth token expired.
+- Alpha tags are filtered out when computing the next stable version, and `release.yml` skips the changelog build for them — the changelog tracks stable releases only.
+- `alpha-release.yml` always tags `ai-develop` HEAD regardless of the branch it was dispatched from.
+- Claude fixes are direct commits to `ai-develop`, not per-issue branches — revert with `git revert <sha>`. The `claude-bot` concurrency group serializes runs. Re-add `claude-approved` to retry a failed run.
+- A merge conflict between `ai-develop` and `main` aborts the Claude run before Claude starts; resolve manually, then re-label.
 
-1. create labels `claude-approved` and `claude-failed`.
-2. create `ai-develop` branch — `git checkout -b ai-develop main && git push -u origin ai-develop`.
-3. add secrets `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_RULES` (see above).
-4. install [github.com/apps/claude](https://github.com/apps/claude) on the repo.
-5. settings → actions → general → check "allow github actions to create and approve pull requests".
-
-**flow**: label issue `claude-approved` → workflow gate (label + owner) → sync `ai-develop` ← `main` → claude commits `fix(#N): ...` → posts detail comment → upserts rolling pr `ai-develop → main` → removes label.
-
-**failure path**: any step failure posts a comment with run url + likely causes and applies `claude-failed`. re-add `claude-approved` to retry.
-
-**concurrency**: `claude-bot` group serializes runs.
-
-**reverting**: `git revert <sha>` on `ai-develop` (fixes are direct commits, not per-issue branches).
-
-## alpha publishing
-
-manual trigger — **actions → alpha release → run workflow** (or `gh workflow run alpha-release.yml`). always tags `ai-develop` HEAD regardless of trigger context. `release.yml` then publishes to the curseforge alpha channel (skips `update_changelog.py` — changelog tracks stable only).
-
-## common breakages
-
-- **tag created but no release run** → `ORBIT_PAT` expired.
-- **curseforge upload fails** → `CURSE_API_KEY` rotated.
-- **claude run silently fails to start** → label gate not satisfied (must be repo owner adding `claude-approved`) or `CLAUDE_CODE_OAUTH_TOKEN` expired.
+## References
+- Lint scripts: `.scripts/` at the repo root.
+- [BigWigs packager](https://github.com/BigWigsMods/packager) — packaging + CurseForge upload; library externals come from `.pkgmeta`.
+- [anthropics/claude-code-action](https://github.com/anthropics/claude-code-action) — the issue-resolver action.

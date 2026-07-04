@@ -1,73 +1,25 @@
-# quality of life modules
+# QoL
 
-the `QoL/` directory contains standalone, lightweight quality-of-life adjustments to the blizzard ui. current modules: `MoveMore` (makes blizzard panels draggable), `Mouse` (cursor highlight overlay), `UserInterface` (UI scale below blizzard's floor + class color tweaks), `QuestAutomation` (auto accept/turn-in quests), `NpcAutomation` (auto gossip/sell-junk/repair at NPCs), and `Spotlight` (hotkey-driven universal search, decomposed into `QoL/Spotlight/`).
+## Description
+Standalone, always-on quality-of-life behaviors layered over the Blizzard UI: `MoveMore` (draggable Blizzard panels), `Mouse` (cursor highlight overlay), `UserInterface` (UI scale below Blizzard's floor + class-color tweaks), `QuestAutomation` (auto accept/turn-in quests), `NpcAutomation` (auto gossip/sell-junk/repair), and `Spotlight` (hotkey universal search, decomposed into `Spotlight/`).
 
-these modules differ from standard orbit plugins because they are **account-wide** and do not participate in the orbit profile system. they also have no edit-mode or canvas-mode footprint — they're not user-arranged ui.
+## Purpose
+Home for features that fail the Edit Mode placement test — no movable frame, no edit- or canvas-mode footprint — so they live outside the plugin system entirely. Unlike plugins they are account-wide and do not participate in Orbit profiles.
 
-## naming structure
+## Implementation
+Each module is one PascalCase file registering `Orbit.ModuleName` with `Enable()`/`Disable()`. A loader frame on `PLAYER_LOGIN` defers briefly (`C_Timer.After`), reads the module's flag from `Orbit.db.AccountSettings`, and calls `Enable()` if set; Spotlight alone enables unconditionally. Single-file modules load directly from `Orbit.toc` (no XML bundle); decomposed modules load their own bundle (`QoL\Spotlight\Spotlight.xml`).
 
-- **module name** — descriptive, concisely reflects the functionality (`MoveMore`, `Mouse`, `UserInterface`, `Spotlight`).
-- **file name** — PascalCase matching the module name (`MoveMore.lua`).
-- **namespace** — register the module under `Orbit.ModuleName` (e.g. `Orbit.MoveMore = {}`).
-- **decomposed modules** — larger qol features may live in a folder (`QoL/ModuleName/`) with one file per bounded responsibility and a module-local `README.md`. files are loaded in dependency order via the `.toc` and share the `Orbit.ModuleName` namespace through sub-tables.
+Settings land in `Orbit.db.AccountSettings` — runtime modules read the table directly. The config UI is `Core/Config/Advanced/QoL.lua`: an accordion panel (sections: UserInterface, Colors, MoveMore, Mouse, Automation, Spotlight) whose file-local `Get/SetAccountSetting` helpers write the same table. Adding a section = one builder function returning its content height plus one `sectionDefs` row with a localized `PLU_QOL_SEC_*` label.
 
-## configuration ui
+## Gotchas
+- Account-wide only. Never store QoL state in `Orbit.db.profiles[...]` or generic `Orbit.db` keys — profile switches would wipe or fork it.
+- Modules must not depend on other plugins or on other QoL modules.
+- Decomposed modules keep all state inside the `Orbit.ModuleName` namespace (sub-tables per file) — no module-level mutable state in source files.
+- These modules touch protected Blizzard frames; gate with `Orbit:SafeAction(callback)` or `InCombatLockdown()` before modifying them.
+- User-visible strings go through `Orbit.L` (`PLU_*` keys) — see `Orbit/Localization/README.md`.
 
-qol settings are presented in the orbit configuration panel under the "quality of life" tab, grouped into expandable accordion sections.
-
-to add a new section, update `Orbit/Core/Config/Advanced/QoL.lua`:
-
-1. create a builder function: `local function BuildMySection(body) ... end`
-2. the builder receives the accordion body frame. use `Layout:AddControl()` and `Layout:Stack()` to lay out widgets.
-3. return the computed content height from the builder.
-4. add the section to `sectionDefs` (the label is a localized key, never a hardcoded string):
-   ```lua
-   local sectionDefs = {
-       { L.PLU_QOL_SEC_MYSECTION, BuildMySection },
-   }
-   ```
-5. the accordion and scroll infrastructure handle the rest.
-
-current sections (in order): UserInterface, Colors, MoveMore, Mouse, Automation (Questing + NPCs groups), Spotlight.
-
-## saving & reading settings
-
-all qol settings **must** be account-wide. **do not** use `Orbit.db.profiles[...]` or generic `Orbit.db` keys — those tie the setting to the active character profile or risk data wipes on profile switch.
-
-read and write directly against `Orbit.db.AccountSettings`. the `Core/Config/Advanced/QoL.lua` panel defines file-local `GetAccountSetting`/`SetAccountSetting` helpers for the config builders; runtime modules use the table directly:
-
-```lua
--- reading (with default)
-local v = Orbit.db and Orbit.db.AccountSettings and Orbit.db.AccountSettings.MyCoolSetting
-if v == nil then v = false end
-
--- writing
-if not Orbit.db.AccountSettings then Orbit.db.AccountSettings = {} end
-Orbit.db.AccountSettings.MyCoolSetting = newValue
-```
-
-## initialization & architecture
-
-modules define `Enable()` and `Disable()` methods. use a delayed timer on `PLAYER_LOGIN` to read the setting from `Orbit.db.AccountSettings` and invoke `Enable()` if active:
-
-```lua
-local loader = CreateFrame("Frame")
-loader:RegisterEvent("PLAYER_LOGIN")
-loader:SetScript("OnEvent", function()
-    C_Timer.After(0.5, function()
-        if Orbit.db and Orbit.db.AccountSettings and Orbit.db.AccountSettings.MyModuleEnabled then
-            Orbit.MyModule:Enable()
-        end
-    end)
-    loader:UnregisterAllEvents()
-end)
-```
-
-keep modules combat-safe. use `Orbit:SafeAction(callback)` or `InCombatLockdown()` checks before modifying protected blizzard ui elements.
-
-## rules
-
-- account-wide only — never touch `Orbit.db.profiles`.
-- modules must not depend on other plugins or other qol modules.
-- decomposed modules (`QoL/ModuleName/`) must keep all module-local state inside the `Orbit.ModuleName` namespace; no module-level mutable state in source files.
-- user-visible strings go through `Orbit.L`. see `Orbit/Localization/README.md`.
+## References
+- `QoL/Spotlight/README.md` — the one decomposed module.
+- `Plugins/README.md` — where designable (draggable) UI goes instead; placement test in root `CLAUDE.md`.
+- `Core/Config/Advanced/QoL.lua` — the settings panel.
+- `Orbit/Localization/README.md` — string workflow.

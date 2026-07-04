@@ -517,8 +517,8 @@ function Plugin:ApplySettings()
                 CB:Position(frame.CastBar, frame, self)
                 if frame.CastBar.SetBorder then frame.CastBar:SetBorder(borderSize) end
                 if frame.CastBar.Bar and textureName then Orbit.Skin:SkinStatusBar(frame.CastBar.Bar, textureName, nil, true) end
-                if frame.CastBar.Text then frame.CastBar.Text:SetFont(fontPath, cbTextSize, fontOutline) end
-                if frame.CastBar.Timer then frame.CastBar.Timer:SetFont(fontPath, cbTextSize, fontOutline) end
+                if frame.CastBar.Text then Orbit.Skin:SetFontWithShadow(frame.CastBar.Text, fontPath, cbTextSize, fontOutline) end
+                if frame.CastBar.Timer then Orbit.Skin:SetFontWithShadow(frame.CastBar.Timer, fontPath, cbTextSize, fontOutline) end
                 local castBarAnchor = frame.CastBar.Bar or frame.CastBar
                 ApplySubPos(frame.CastBar.Text, castBarAnchor, textSubPos, "LEFT")
                 ApplySubPos(frame.CastBar.Timer, castBarAnchor, timerSubPos, "RIGHT")

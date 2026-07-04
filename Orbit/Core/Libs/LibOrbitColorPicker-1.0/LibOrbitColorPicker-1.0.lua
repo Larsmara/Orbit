@@ -1,6 +1,6 @@
 -- [ LibOrbitColorPicker-1.0 ] ----------------------------------------------------------------------
 
-local MAJOR, MINOR = "LibOrbitColorPicker-1.0", 6
+local MAJOR, MINOR = "LibOrbitColorPicker-1.0", 7
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end
 
@@ -334,7 +334,8 @@ function lib:CreatePinHandle(gradientBar)
 
     handle:SetScript("OnEnter", function(self)
         if not self.pinData then return end
-        self:EnableKeyboard(true)
+        -- Hover-armed keyboard stays off in combat: OnKeyDown's propagate-restore is protected there.
+        if not InCombatLockdown() then self:EnableKeyboard(true) end
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine(string.format(CL.POS_TT, self.pinData.position * 100))
         GameTooltip:Show()
@@ -344,6 +345,8 @@ function lib:CreatePinHandle(gradientBar)
         self:EnableKeyboard(false)
         GameTooltip:Hide()
     end)
+
+    handle:SetScript("OnHide", function(self) self:EnableKeyboard(false) end)
 
     handle:SetScript("OnDragStart", function(self)
         if not lib.multiPinMode then return end
@@ -387,8 +390,10 @@ function lib:CreatePinHandle(gradientBar)
     end)
 
     handle:SetScript("OnKeyDown", function(self, key)
+        -- SetPropagateKeyboardInput is protected in combat; the lib closes itself on PLAYER_REGEN_DISABLED.
+        local inCombat = InCombatLockdown()
         if not lib.multiPinMode or not self.pinData then
-            self:SetPropagateKeyboardInput(true)
+            if not inCombat then self:SetPropagateKeyboardInput(true) end
             return
         end
         local step = IsShiftKeyDown() and PIN_NUDGE_FINE or PIN_NUDGE_STEP
@@ -397,10 +402,10 @@ function lib:CreatePinHandle(gradientBar)
         elseif key == "RIGHT" then
             self.pinData.position = ClampPosition(self.pinData.position + step)
         else
-            self:SetPropagateKeyboardInput(true)
+            if not inCombat then self:SetPropagateKeyboardInput(true) end
             return
         end
-        self:SetPropagateKeyboardInput(false)
+        if not inCombat then self:SetPropagateKeyboardInput(false) end
         gradientBar:Refresh()
         lib:UpdateCurve()
         lib:UpdateApplyButtonState()
@@ -477,13 +482,26 @@ function lib:UpdateClassColorSwatch()
     self.ui.classSwatch:SetBackdropColor(c.r, c.g, c.b, 1)
 end
 
-function lib:SetupClassColorEvents()
-    if self.ui.classEventFrame then return end
+function lib:SetupEventFrame()
+    if self.ui.eventFrame then return end
     local f = CreateFrame("Frame")
     f:RegisterEvent("PLAYER_ENTERING_WORLD")
     f:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-    f:SetScript("OnEvent", function() lib:UpdateClassColorSwatch() end)
-    self.ui.classEventFrame = f
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:RegisterEvent("PLAYER_REGEN_ENABLED")
+    f:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_REGEN_DISABLED" then
+            if lib:IsOpen() then
+                lib.wasCancelled = true
+                lib:CloseFrame()
+            end
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            if lib:IsOpen() then lib.ui.frame:EnableKeyboard(true) end
+        else
+            lib:UpdateClassColorSwatch()
+        end
+    end)
+    self.ui.eventFrame = f
 end
 
 -- [ DRAG SYSTEM ] ----------------------------------------------------------------------------------
@@ -862,11 +880,12 @@ function lib:CreatePickerFrame()
     f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
 
     f:SetScript("OnKeyDown", function(self, key)
+        -- SetPropagateKeyboardInput is protected in combat; the lib closes on PLAYER_REGEN_DISABLED and combat-opened pickers run keyboard-disabled.
         if key == "ESCAPE" then
-            self:SetPropagateKeyboardInput(false)
+            if not InCombatLockdown() then self:SetPropagateKeyboardInput(false) end
             lib.wasCancelled = true
             lib:CloseFrame()
-        else
+        elseif not InCombatLockdown() then
             self:SetPropagateKeyboardInput(true)
         end
     end)
@@ -1197,7 +1216,7 @@ function lib:Initialize()
     self:CreateCurrentSwatch()
     self:CreateHexInput()
     self:CreateClassColorSwatch()
-    self:SetupClassColorEvents()
+    self:SetupEventFrame()
     self:CreateDragTexture()
     self:CreateTourButton()
     self:CreateDesaturationCheckbox()
@@ -1784,6 +1803,8 @@ function lib:Open(options)
     else
         self.ui.frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 375, -75)
     end
+    -- Combat-opened pickers run keyboard-disabled so keybinds aren't swallowed; PLAYER_REGEN_ENABLED restores it.
+    self.ui.frame:EnableKeyboard(not InCombatLockdown())
     self.ui.frame:Show()
 
     local sessionId = self.sessionId

@@ -455,6 +455,12 @@ end
 -- Roll/Pass drive the same INSECURE Accept/DeclineSpellConfirmationPrompt Blizzard's own buttons call, so it's combat-safe; nil spellID is preview.
 function Plugin:_ShowBonusRoll(spellID, duration, currencyID, currencyCost, displayItemID)
     if not IsEnabled() or not self.frame then return end
+
+    -- Mirror Blizzard's BonusRollFrame_StartBonusRoll gate: fall back to the default coin, then suppress a live prompt the player can't afford (count == 0). The server fires this on every eligible boss kill; the currency check is what keeps it from showing with no coins. Preview (nil spellID) skips the gate.
+    if not currencyID or currencyID == 0 then currencyID = BONUS_ROLL_REQUIRED_CURRENCY end
+    local currencyInfo = C_CurrencyInfo and currencyID and C_CurrencyInfo.GetCurrencyInfo(currencyID)
+    if spellID and (not currencyInfo or (currencyInfo.quantity or 0) == 0) then return end
+
     local panel = self._bonusPanel or self:_AcquirePanel()
     panel._rollID = nil; panel._fakeEnd = nil; panel._fakeItemID = nil
     panel._isBonus = true
@@ -473,9 +479,8 @@ function Plugin:_ShowBonusRoll(spellID, duration, currencyID, currencyCost, disp
     panel.Count:Hide()
 
     panel._bonusCostText = nil   -- "<n> [coin] <name>" shown in the Roll tooltip
-    if C_CurrencyInfo and currencyID and currencyID > 0 then
-        local ci = C_CurrencyInfo.GetCurrencyInfo(currencyID)
-        if ci then panel._bonusCostText = ("%d |T%d:14|t %s"):format(currencyCost or 1, ci.iconFileID or 0, ci.name or "") end
+    if currencyInfo then
+        panel._bonusCostText = ("%d |T%d:14|t %s"):format(currencyCost or 1, currencyInfo.iconFileID or 0, currencyInfo.name or "")
     end
 
     -- the Timer bar runs in ms (PanelOnUpdate's `_bonusEnd` branch returns ms), so scale the seconds up

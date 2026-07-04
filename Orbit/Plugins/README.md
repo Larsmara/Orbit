@@ -1,63 +1,48 @@
-# plugins
+# Plugins
 
-all orbit plugins live here. each subdirectory is one plugin (one bounded context).
+## Description
+All Orbit plugins. Each subdirectory is one plugin and one bounded context; `VisibilityManifest.lua` is the single Plugins-layer file allowed to enumerate plugins by name, feeding the Visibility config panel without making Core plugin-aware.
 
-## purpose
+## Purpose
+Plugins are the designable feature layer: every plugin exposes a frame the user can move, resize, or restyle in Edit Mode or Canvas Mode. The deciding question is "can the user drag it in Edit Mode?" — yes → here; no → `QoL/`.
 
-plugins are the **designable** feature layer. every plugin in this directory exposes a frame the user can move, resize, or restyle through edit mode / canvas mode. always-on behaviors with no movable frame (hotkey tools, automatic tweaks) live under `QoL/` instead. the deciding question is: can the user drag it in edit mode? yes → here; no → `QoL/`.
+| Directory | Plugin |
+|---|---|
+| ActionBars/ | action bar containers, button layout, text overlays |
+| BossFrames/ | boss unit frames (boss1–boss5) |
+| CooldownManager/ | Blizzard cooldown viewers, skinned and repositionable |
+| CooldownViewerExtensions/ | side-tab registrar for Blizzard's CooldownViewerSettings |
+| DamageMeter/ | multi-instance meter on top of `C_DamageMeter` |
+| Datatexts/ | free-floating datatexts with corner-triggered drawer |
+| Extras/ | standalone one-file plugins (TalkingHead, MinimapButton) |
+| GroupFrames/ | party + raid unit frames |
+| MenuItems/ | micro menu, bag bar, queue status |
+| Minimap/ | minimap replacement with canvas-mode components |
+| Objectives/ | reparented, skinned objective tracker |
+| RaidPanel/ | raid-leader panel and marker management |
+| StatusWidget/ | radial XP/rep/honor/currency orb with toast replays |
+| Tracked/ | user-authored tracked ability icons and bars |
+| UnitFrames/ | player, target, focus frames and sub-frames |
 
-## directory structure
+## Implementation
+Lifecycle: Core calls `RegisterPlugin` at load, then `OnLoad()`, then `ApplySettings()`. The config panel calls `AddSettings(dialog, systemFrame)` to build the schema; every `SetSetting` write is followed by the plugin re-running `ApplySettings()`.
 
-```
-Plugins/
-  ActionBars/                 -- action bar containers, button layout, text overlays
-  BossFrames/                 -- boss unit frames (1-5)
-  CooldownManager/            -- cooldown viewers and charge bars (tracked abilities live in their own `Tracked/` plugin)
-  CooldownViewerExtensions/   -- shared side-tab registrar for blizzard's CooldownViewerSettings (consumed by Tracked)
-  DamageMeter/                -- multi-instance damage / healing / interrupt meter on top of C_DamageMeter
-  Datatexts/                  -- free-floating datatext system with corner-triggered drawer
-  Extras/                     -- standalone plugins that don't fit a larger bounded context (TalkingHead, MinimapButton)
-  GroupFrames/                -- group unit frames (party + raid, tier-adaptive)
-  MenuItems/                  -- micro menu, bag bar, queue status
-  Minimap/                    -- minimap replacement with canvas-mode component layout
-  RaidPanel/                  -- party / raid frame extensions and raid-marker management
-  StatusWidget/               -- circular (radial) xp / reputation / honor / currency widget with a right-click source menu, milestone flourishes (level-up / renown / honor), and toast replays in the hollow centre
-  Tracked/                    -- user-authored tracked ability icons and bars
-  UnitFrames/                 -- player, target, focus frames and their sub-frames
-```
+New-plugin checklist:
+1. Create a directory under `Plugins/` and a main file (`MyPlugin.lua`).
+2. Register: `Orbit:RegisterPlugin("My Plugin", SYSTEM_ID, { defaults = { ... }, OnLoad = function(self) ... end })`. Schema defaults live in this `defaults` block and never in `DefaultProfile.lua` — that file is a saved-layout snapshot owned by ProfileManager.
+3. Implement `OnLoad()` and `ApplySettings()`.
+4. Implement `AddSettings(dialog, systemFrame)`: build a `schema` table, wire tabs with `OrbitEngine.SchemaBuilder:AddSettingsTabs(schema, dialog, tabsList, defaultTab, self)` (returns the active tab), render with `OrbitEngine.Config:Render(dialog, systemFrame, self, schema)`.
+5. Add each `.lua` file as a `<Script>` entry in the plugin's `.xml` bundle, dependencies before consumers (Extras has no bundle — its files go directly in `Orbit.toc`).
 
-## lifecycle
+Settings flow through `PluginMixin` (`GetSetting`/`SetSetting`, spec-scoped `Get/SetSpecData`); position persistence through `OrbitEngine.Frame:AttachSettingsListener` / `RestorePosition`; visuals through `Orbit.Skin`.
 
-```mermaid
-sequenceDiagram
-    participant Core as Core/Init
-    participant Plugin as Plugin
-    participant Settings as Config/Renderer
+## Gotchas
+- Plugins may depend on any Core module but never on other plugins. Inter-plugin communication goes through `Orbit.EventBus`, never direct calls. Sole sanctioned exception: `CooldownViewerExtensions:RegisterTab` (see its README).
+- Each plugin owns its frames, events, and settings — one bounded context per directory.
+- Decompose on multiple responsibilities, never on line count. Constants at file top; no magic numbers.
+- Adding a plugin frame to the Visibility panel means adding a row to `VisibilityManifest.lua` — Core's VisibilityEngine stays plugin-agnostic.
 
-    Core->>Plugin: RegisterPlugin(name, systemId, definition)
-    Core->>Plugin: OnLoad()
-    Core->>Plugin: ApplySettings()
-    Settings->>Plugin: AddSettings(dialog, systemFrame)
-    Note over Plugin: user changes a setting
-    Settings->>Plugin: SetSetting(key, value)
-    Plugin->>Plugin: ApplySettings()
-```
-
-## adding a new plugin
-
-1. create a new directory under `Plugins/` with the plugin name
-2. create the main plugin file (e.g., `MyPlugin.lua`)
-3. call `Orbit:RegisterPlugin("My Plugin", SYSTEM_ID, { defaults = { ... }, OnLoad = function(self) ... end })` with your plugin definition
-4. implement `OnLoad()` and `ApplySettings()` methods
-5. implement `function Plugin:AddSettings(dialog, systemFrame)` — receives the settings dialog and the system frame to populate; build a `schema` table, wire the standard tabs with `OrbitEngine.SchemaBuilder:AddSettingsTabs(schema, dialog, tabsList, defaultTab, self)` (returns the active tab), then render with `OrbitEngine.Config:Render(dialog, systemFrame, self, schema)`
-6. add the new file to `Plugins/MyPlugin/MyPlugin.xml` as a `<Script file="NewFile.lua"/>` entry; ensure it loads after its dependencies
-7. declare plugin schema defaults inline in the `defaults = { ... }` block of the options table passed to `RegisterPlugin`. Do not edit `DefaultProfile.lua` — that file is a saved-layout snapshot owned by ProfileManager, not the plugin-schema default site.
-
-## rules
-
-- plugins may depend on core. they must never depend on other plugins.
-- inter-plugin communication must go through the eventbus, never direct calls
-- each plugin manages its own frames, events, and settings
-- plugin files decompose when they hold multiple responsibilities, not because they cross a line count. LOC is a smell, not a rule.
-- all constants at file top. no magic numbers.
-- follow the existing patterns: `PluginMixin` for settings, `Frame:AttachSettingsListener` for canvas, `Skin` for visuals
+## References
+- `Core/README.md` — data architecture; `Core/Plugin/README.md` — plugin lifecycle and profile handling.
+- Skills: `/canvas-mode` for draggable component types, `/wow-frames` for new frames and secure templates.
+- Non-designable behaviors live in `QoL/`; independently installable features in `Orbit-Dock-*` sub-addons.

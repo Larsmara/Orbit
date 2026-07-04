@@ -124,8 +124,7 @@ function Mixin:UpdateTextSize(frame, textSize)
     local fontPath = LSM:Fetch("font", globalFontName) or "Fonts\\FRIZQT__.TTF"
     local outline = Orbit.Skin:GetFontOutline()
     if frame.Name then
-        frame.Name:SetFont(fontPath, textSize, outline)
-        Orbit.Skin:ApplyFontShadow(frame.Name)
+        Orbit.Skin:SetFontWithShadow(frame.Name, fontPath, textSize, outline)
         if frame._fullName then frame.Name:SetText(frame._fullName) end
         if frame.GetNameAvailableWidth then
             local available = frame:GetNameAvailableWidth()
@@ -133,8 +132,7 @@ function Mixin:UpdateTextSize(frame, textSize)
         end
     end
     if frame.HealthText then
-        frame.HealthText:SetFont(fontPath, textSize, outline)
-        Orbit.Skin:ApplyFontShadow(frame.HealthText)
+        Orbit.Skin:SetFontWithShadow(frame.HealthText, fontPath, textSize, outline)
     end
     ReapplyTextOverride(self, frame, "Name", textSize, fontPath)
     ReapplyTextOverride(self, frame, "HealthText", textSize, fontPath)

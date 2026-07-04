@@ -1,193 +1,36 @@
-# liborbitcolorpicker-1.0
+# LibOrbitColorPicker-1.0
 
-standalone color picker with gradient bar, drag-and-drop pins, and class color swatch. supports single-color and multi-color (gradient) modes. includes a built-in sequential guided tour with localization for 9 languages.
+## Description
+Standalone LibStub color picker with a gradient bar, drag-and-drop pins, class-color and recent-color swatches, and a built-in guided tour. Supports single-color and multi-color (gradient) modes. Orbit-authored — editable, not vendored.
 
-## usage
+## Purpose
+Gives every Orbit consumer one picker for both static colors and progress-mapped color curves (health bars, timer text), instead of Blizzard's single-color `ColorPickerFrame`.
 
-### multi-color mode (gradient)
+## Implementation
+A caller passes saved data into `lib:Open(options)`; the picker edits a pin list; the callback returns the result. Data flow: `initialData` (`{ pins = ... }` curve table or plain `{ r, g, b, a }`) → internal pin list → `C_CurveUtil.CreateColorCurve()` rebuilt on every pin change → `callback(result, wasCancelled)` fired on each change and on close.
 
-```lua
-local lib = LibStub("LibOrbitColorPicker-1.0", true)
-if not lib then return end
-
-lib:Open({
-    initialData = self.curveData,
-    forceSingleColor = self.singleColorMode,
-    recentColorsDb = mySavedVar.RecentColors,
-    callback = function(result, wasCancelled)
-        if result and result.pins and #result.pins > 0 then
-            self.curveData = result
-        else
-            self.curveData = nil
-        end
-        self:UpdatePreview()
-        if self.onChangeCallback then self.onChangeCallback(self.curveData) end
-    end,
-})
-```
-
-### single-color mode
-
-```lua
-lib:Open({
-    initialData = { r = frame.r, g = frame.g, b = frame.b, a = frame.a },
-    forceSingleColor = true,
-    recentColorsDb = mySavedVar.RecentColors,
-    callback = function(result)
-        if not result then return end
-        local pin = result.pins and result.pins[1]
-        if pin and pin.color then
-            frame.UpdateColor(pin.color.r, pin.color.g, pin.color.b, pin.color.a)
-        end
-    end,
-})
-```
-
-### first-time tour via onOpen hook
-
-the library exposes a generic `onOpen` callback. consumers use this to trigger the built-in tour on first open, using their own persistence:
-
-```lua
-lib:Open({
-    initialData = myData,
-    onOpen = function(picker)
-        if not mySavedVars.colorPickerTourSeen then
-            mySavedVars.colorPickerTourSeen = true
-            C_Timer.After(0.1, function()
-                if picker:IsOpen() then picker:StartTour() end
-            end)
-        end
-    end,
-    callback = function(result) ... end,
-})
-```
-
-the tour can always be started manually via the info button in the top-left corner.
-
-### checking state
-
-```lua
-lib:IsOpen()           -- true while the picker frame is shown
-lib:GetColorCurve()    -- last built native ColorCurve (or nil if never built)
-```
-
-## open options
-
-| key | type | description |
-|---|---|---|
-| `initialData` | `table` or `nil` | curve table `{ pins = {...} }` or simple color `{ r, g, b, a }` |
-| `forceSingleColor` | `boolean` | restrict to one pin when `true` (default: `false`) |
-| `hasDesaturation` | `boolean` | show desaturation checkbox when `true` (default: `false`) |
-| `recentColorsDb` | `table` or `nil` | array reference to enable the persistent 8-slot color history row |
-| `callback` | `function(result, wasCancelled)` | called on every pin/curve change (`wasCancelled = false`) and on picker close. On cancel (escape / close) it fires once with the rolled-back snapshot and `wasCancelled = true`. Consumers branch on `wasCancelled` to discard the cancel payload. |
-| `onOpen` | `function(picker)` | called after picker is fully shown and initialized |
-| `anchor` | `table` or `nil` | `{ frame, point, relativePoint, x, y }` to anchor the picker to a caller-owned frame. defaults to `TOPLEFT` of the picker → `TOPRIGHT` of `frame`. omit to use the library default (top-left of screen, fixed offset). |
-
-## callback result
-
-| scenario | result |
+| API | Does |
 |---|---|
-| apply with pins | `{ curve = <native>, pins = { ... }, desaturated = bool }` |
-| clear all pins ("clear color") | `nil` |
-| cancel (escape / close) | `{ curve, pins, desaturated }` from snapshot before edits |
+| `lib:Open(options)` | open with `initialData`, `forceSingleColor`, `hasDesaturation`, `recentColorsDb` (array ref enabling the 8-slot history row), `callback(result, wasCancelled)`, `onOpen(picker)` (fires after deferred init — consumers hook it for first-open tours), `anchor` (`{ frame, point, relativePoint, x, y }`; default fixed top-left of screen) |
+| `lib:IsOpen()` | true while the picker frame is shown |
+| `lib:GetColorCurve()` | last built native ColorCurve, or nil |
+| `lib:StartTour()` / `EndTour()` / `ToggleTour()` | 6-stop guided tour (also on the top-left info button) |
 
-`desaturated` is only present when `hasDesaturation = true` was set in open options.
+Callback result: apply with pins → `{ curve = <native ColorCurve>, pins = { { position = 0..1, color = {r,g,b,a}, type = "class"? } }, desaturated = bool? }` (`desaturated` only when `hasDesaturation` was set); clear all pins → `nil`; cancel (escape / close) → the pre-edit snapshot with `wasCancelled = true`.
 
-**persist `pins` (and `desaturated`), not `curve`.** `curve` is a transient native `ColorCurve` the picker rebuilds from `pins` on every open — a convenience for immediate use, never a saved field. Reopen by passing the saved `{ pins = ... }` back as `initialData`. On cancel, branch on `wasCancelled` and discard the payload; the picker has already rolled its own state back, including the recent-colors history.
+Modes: `forceSingleColor = true` keeps exactly one pin (swatch drags replace it); multi-color allows unlimited pins — drag swatches onto the bar to add, drag handles to move, right-click to remove, arrow keys nudge (shift = fine).
 
-### handling nil (default color fallback)
+## Gotchas
+- **Persist `pins` (and `desaturated`), never `curve`** — `curve` is a transient native object rebuilt from pins on each open, a convenience for immediate use only. Reopen by passing the saved `{ pins = ... }` back as `initialData`.
+- Branch on `wasCancelled` and discard the cancel payload; the picker has already rolled its own state back, including the recent-colors history (recents commit only on apply).
+- Clearing all pins delivers `nil` — every consumer must supply its own default-color fallback.
+- `type = "class"` pins resolve to the player's current class color. In single-color mode a manual edit (wheel, value slider, hex) demotes the pin to a plain color so the picked value is honored verbatim; an alpha-only change does not demote (class pins render at full alpha).
+- Entering combat closes the picker as a cancel (`PLAYER_REGEN_DISABLED`) because `SetPropagateKeyboardInput` is protected in combat; a picker opened during combat runs keyboard-disabled until `PLAYER_REGEN_ENABLED`.
+- The tour tooltip frame is lazy-built on first `StartTour()` — non-tour users pay zero cost at file load.
+- All UI strings (labels, tooltips, tour) live in the `CP_LOCALE` table at the bottom of `LibOrbitColorPicker-1.0.lua`, resolved once at file load via `GetLocale()` — 9 languages (enUS/enGB, deDE, frFR, esES/esMX, ptBR, ruRU, koKR, zhCN, zhTW). Extend by adding keys to every locale block.
+- `checkerboard.tga` (alpha preview) is located via `debugstack` path matching — renaming the library directory breaks it.
 
-when the user removes all pins, the callback receives `nil`. consumers must provide a fallback:
-
-```lua
-local pins = savedData and savedData.pins
-local color = (pins and pins[1] and pins[1].color) or DEFAULT_COLOR
-element:SetTextColor(color.r, color.g, color.b, color.a or 1)
-```
-
-## data format
-
-```lua
-{
-    curve = <native ColorCurve>,
-    pins = {
-        { position = 0.0, color = { r = 1, g = 0, b = 0, a = 1 } },
-        { position = 1.0, color = { r = 0, g = 0, b = 1, a = 1 }, type = "class" },
-    },
-}
-```
-
-- `curve`: transient native `ColorCurve` — for immediate use, not for persistence (see callback result)
-- `position`: 0.0 (left) to 1.0 (right) on the gradient bar
-- `color`: resolved rgba values
-- `type`: optional, `"class"` pins resolve to the player's current class color. in single-color mode, a manual edit (wheel, value slider, or hex) drops the `class` type so the picked color is honored verbatim instead of re-resolving to the class color on apply. an alpha-only change does not demote a class pin (class pins always render at full alpha)
-- `desaturated`: optional `boolean`, present only when `hasDesaturation = true` was set in open options
-
-## modes
-
-### single-color (`forceSingleColor = true`)
-
-one pin only. dragging from swatches replaces the existing pin. used for static text components (stacks, keybind, charges).
-
-### multi-color (default)
-
-unlimited pins. drag colors onto the gradient bar to add stops. drag handles to reposition. right-click a handle to remove it. used for timer texts and health bars where color maps to a progress value.
-
-## interaction
-
-- drag from current swatch to gradient bar to add a pin
-- drag from class color swatch to add a class-tracking pin
-- drag from recent colors history (if `recentColorsDb` is provided) to reuse a picked color
-- drag pin handles to reposition (multi-color only)
-- arrow keys to nudge a focused pin, shift for fine precision
-- right-click a pin handle to remove it
-- "apply color" commits the result, "clear color" appears when no pins remain
-- close / escape cancels and restores the previous state, including the recent-colors history
-- recent colors are committed only on apply; colors added during a session that is then cancelled are rolled back
-
-## localization
-
-the entire ui (labels, tooltips, buttons, mode titles, tour) is localized for 9 languages and resolves at file load via `GetLocale()`:
-
-- english (enUS / enGB)
-- german (deDE)
-- french (frFR)
-- spanish (esES / esMX)
-- brazilian portuguese (ptBR)
-- russian (ruRU)
-- korean (koKR)
-- simplified chinese (zhCN)
-- traditional chinese (zhTW)
-
-string keys live in the `CP_LOCALE` table at the bottom of `LibOrbitColorPicker-1.0.lua`. extend per-locale by adding new keys to each block; the tour and ui both read the same active locale.
-
-## tour system
-
-a built-in sequential guided tour with 6 stops:
-
-1. **color wheel** — hue, saturation, and brightness controls
-2. **current color swatch** — drag to gradient bar to add pin
-3. **class color swatch** — spec-tracking pin
-4. **gradient bar** — color curve visualization, pin management
-5. **pin controls** — arrow key nudging, shift for fine precision
-6. **apply / clear** — save gradient or reset to default
-
-the tour tooltip frame is lazy-built on first `StartTour()` — users who never run the tour pay zero cost at file load.
-
-### public tour api
-
-| method | description |
-|---|---|
-| `lib:StartTour()` | begin the tour at stop 1 |
-| `lib:EndTour()` | dismiss the tour |
-| `lib:ToggleTour()` | cycle: start → next stop → ... → end |
-
-the tour button (top-left corner) calls `ToggleTour()`.
-
-## bundled assets
-
-- `checkerboard.tga` — alpha transparency preview pattern (auto-detected via `debugstack`)
-
-## dependencies
-
-- `LibStub`
+## References
+- `LibOrbitColorPicker-1.0.lua` / `.xml` — the whole library; `LICENSE` (MIT).
+- Depends on `LibStub` only. Load with the silent flag: `LibStub("LibOrbitColorPicker-1.0", true)`.
+- Orbit consumers sample curves via `OrbitEngine.ColorCurve:SampleColorCurve()`.

@@ -161,6 +161,9 @@ function Plugin:AddSettings(dialog, systemFrame)
                 for index, cont in pairs(self.containers) do
                     if index <= 8 then self:ApplySettings(cont) end
                 end
+                for index, cont in pairs(self.containers) do
+                    if index > 8 or index <= val then OrbitEngine.Frame:RestorePosition(cont, self, index) end
+                end
             end })
         local config = BAR_CONFIG[systemIndex]
         local isSpecialBar = (config and config.isSpecial) or SPECIAL_BAR_INDICES[systemIndex]
@@ -244,11 +247,13 @@ function Plugin:OnLoad()
     self:InitializeContainers()
     ABC:CreateVehicleExit(self)
     for index, container in pairs(self.containers) do ABPreview:Setup(self, container, index) end
+    local numBars = self:GetSetting(1, "NumActionBars") or 4
     for index, container in pairs(self.containers) do
         self:ReparentButtons(index)
         OrbitEngine.Frame:RestorePosition(container, self, index)
         self:RefreshSkinSettings(index)
-        self:LayoutButtons(index)
+        if index <= 8 and index > numBars then self:ApplySettings(container)
+        else self:LayoutButtons(index) end
         if MasqueBridge then
             local config = BAR_CONFIG[index]
             if config then
@@ -310,7 +315,7 @@ function Plugin:OnLoad()
     Orbit.EventBus:On("PLAYER_CONTROL_GAINED", RefreshPetBar, self)
     Orbit.EventBus:On("ORBIT_PLAYER_ENTERING_WORLD", RefreshPetBar, self)
     local function HideFlyoutBackground()
-        local bg = SpellFlyoutBackgroundEnd
+        local bg = SpellFlyout and SpellFlyout.Background
         if not bg then return end
         if bg.End then bg.End:Hide() end
         if bg.Start then bg.Start:Hide() end
@@ -326,7 +331,7 @@ function Plugin:OnLoad()
         local skinSettings = { style = 1, aspectRatio = "1:1", zoom = 8, borderStyle = 1, borderSize = Orbit.db.GlobalSettings.BorderSize, iconBorder = true, swipeColor = { r = 0, g = 0, b = 0, a = 0.8 }, showTimer = true, hideName = false, backdropColor = OrbitEngine.ColorCurve:GetFirstColorFromCurve(self:GetSetting(1, "IconBackdropColor")) or { r = 0.08, g = 0.08, b = 0.08, a = 0.5 }, keypressColor = OrbitEngine.ColorCurve:GetFirstColorFromCurve(self:GetSetting(1, "KeypressColor")) or { r = 1, g = 1, b = 1, a = 0.6 } }
         local i = 1
         while true do
-            local btn = _G["SpellFlyoutButton" .. i]
+            local btn = _G["SpellFlyoutPopupButton" .. i]
             if not btn then break end
             btn:SetSize(BUTTON_SIZE, BUTTON_SIZE)
             Orbit.Skin.ActionButtonSkin:Apply(btn, skinSettings)
@@ -533,8 +538,8 @@ function Plugin:LayoutButtons(index, positionOnly)
                 local petName, petTexture, petIsToken = GetPetActionInfo(button:GetID() or i)
                 if petName or petTexture or petIsToken then hasAction = true end
             elseif index == STANCE_BAR_INDEX then
-                local stanceTexture, stanceName = GetShapeshiftFormInfo(button:GetID() or i)
-                if stanceTexture or stanceName then hasAction = true end
+                local stanceTexture, stanceActive = GetShapeshiftFormInfo(button:GetID() or i)
+                if stanceTexture or stanceActive then hasAction = true end
             end
 
             local shouldShow = not (hideEmpty and not hasAction)
@@ -625,8 +630,17 @@ function Plugin:ApplySettings(frame)
     if enabled == false then
         UnregisterStateDriver(actualFrame, "visibility")
         if blizzBar then OrbitEngine.NativeFrame:SecureHide(blizzBar) end
-        local point, _, _, x, y = actualFrame:GetPoint(1)
+        local point, x, y = OrbitEngine.FrameSnap:NormalizePosition(actualFrame)
         if point then self:SetSetting(index, "Position", { point = point, x = x, y = y }) end
+        -- Capture dependents at their live spot before this bar parks, so they hold position instead of following it to default.
+        for _, child in ipairs(OrbitEngine.FrameAnchor:GetAnchoredChildren(actualFrame)) do
+            if not child.orbitDisabled and child.orbitPlugin == self and child.systemIndex then
+                local cp, cx, cy = OrbitEngine.FrameSnap:NormalizePosition(child)
+                if cp then child.orbitPlugin:SetSetting(child.systemIndex, "Position", { point = cp, x = cx, y = cy }) end
+                OrbitEngine.FrameAnchor:BreakAnchor(child, true, false, true)
+            end
+        end
+        OrbitEngine.FrameAnchor:BreakAnchor(actualFrame, true, false, true)
         local buttons = self.buttons[index]
         if buttons and #buttons > 0 then
             local hiddenFrame = EnsureHiddenFrame()

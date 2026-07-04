@@ -1155,49 +1155,57 @@ function Plugin:_ResolveSource(source)
     return MODE_REP
 end
 
--- Primary source at rest; hover+Shift swaps to the secondary (re-resolved on hover and MODIFIER_STATE_CHANGED so Shift flips it live), stashing the active slot's currency id for CurrencyRecord.
-function Plugin:ResolveMode()
-    if self._mplusActive or self._mplusResults then self._activeCurrencyID = nil; return MODE_MPLUS end
-    local source, currencyKey
-    local secondary = self:GetSetting(SYSTEM_ID, "SecondarySource")
-    if self._hovered and IsShiftKeyDown() and secondary and secondary ~= "none" then
-        source, currencyKey = secondary, "SecondaryCurrencyID"
-    else
-        source, currencyKey = self:GetSetting(SYSTEM_ID, "PrimarySource") or "auto", "PrimaryCurrencyID"
-    end
+-- Build the record for one source key, stashing that slot's currency id for CurrencyRecord.
+function Plugin:_BuildForSource(source, currencyKey)
     self._activeCurrencyID = source == "currency" and self:GetSetting(SYSTEM_ID, currencyKey) or nil
-    return self:_ResolveSource(source)
-end
-
--- Each mode returns the same record shape {mode,name,level,current,max,color[,rested]}.
-function Plugin:BuildRecord()
-    local mode = self:ResolveMode()
-    if mode == MODE_MPLUS then return self:MythicPlusRecord()
-    elseif mode == MODE_HONOR then return self:HonorRecord()
+    local mode = self:_ResolveSource(source)
+    if mode == MODE_HONOR then return self:HonorRecord()
     elseif mode == MODE_XP then return self:XPRecord()
     elseif mode == MODE_CURRENCY then return self:CurrencyRecord()
     elseif mode == MODE_HOUSE then return self:HousingRecord() end
     return self:BuildRepRecord()
 end
 
+-- Resting display falls down a stack: primary source, then the secondary when the primary tracks nothing (record.empty), then a still-empty record that conceals the ring (_restEmpty drives the at-rest hide). Hover+Shift peeks the secondary directly, re-resolved on hover / MODIFIER_STATE_CHANGED so Shift flips it live. Each mode returns {mode,name,level,current,max,color[,rested][,empty]}.
+function Plugin:BuildRecord()
+    if self._mplusActive or self._mplusResults then
+        self._activeCurrencyID = nil
+        self._restEmpty = false
+        return self:MythicPlusRecord()
+    end
+    local secondary = self:GetSetting(SYSTEM_ID, "SecondarySource")
+    local hasSecondary = secondary and secondary ~= "none"
+    if self._hovered and IsShiftKeyDown() and hasSecondary then
+        local peek = self:_BuildForSource(secondary, "SecondaryCurrencyID")
+        self._restEmpty = peek.empty and true or false
+        return peek
+    end
+    local record = self:_BuildForSource(self:GetSetting(SYSTEM_ID, "PrimarySource") or "auto", "PrimaryCurrencyID")
+    if record.empty and hasSecondary then
+        local fallback = self:_BuildForSource(secondary, "SecondaryCurrencyID")
+        if not fallback.empty then record = fallback end
+    end
+    self._restEmpty = record.empty and true or false
+    return record
+end
+
 function Plugin:HonorRecord()
+    local max = UnitHonorMax("player")
+    local empty = (not max) or (not issecretvalue(max) and max <= 0)
     return { mode = MODE_HONOR, name = L.PLU_HONOR_NAME, level = UnitHonorLevel("player") or 0,
-             current = UnitHonor("player"), max = UnitHonorMax("player"),
+             current = UnitHonor("player"), max = max, empty = empty or nil,
              color = self:GetColor("HonorColor", HONOR_COLOR) }
 end
 
 function Plugin:XPRecord()
     local rested = GetXPExhaustion()
     if issecretvalue(rested) then rested = nil end   -- xp goes secret in encounters; drop rested then
-    return { mode = MODE_XP, name = L.PLU_XP_NAME, level = UnitLevel("player") or 0,
-             current = UnitXP("player"), max = UnitXPMax("player"), rested = rested,
+    local level = UnitLevel("player") or 0
+    -- Empty from level/disabled (both non-secret) — never the max, which can be secret in an encounter.
+    local empty = level >= GetMaxPlayerLevel() or (IsXPUserDisabled and IsXPUserDisabled()) or false
+    return { mode = MODE_XP, name = L.PLU_XP_NAME, level = level,
+             current = UnitXP("player"), max = UnitXPMax("player"), rested = rested, empty = empty or nil,
              color = self:GetColor("XPColor", XP_COLOR) }
-end
-
--- The "auto" primary, and CurrencyRecord's fallback when nothing's tracked: xp while leveling, else rep.
-function Plugin:_AutoRecord()
-    if self:_ResolveSource("auto") == MODE_XP then return self:XPRecord() end
-    return self:BuildRepRecord()
 end
 
 -- Reputation spans come from plain (non-secret) C_Reputation data, reduced to a 0-based current/max; renown / paragon / standing all share one configurable RepColor.
@@ -1205,7 +1213,7 @@ function Plugin:BuildRepRecord()
     local repColor = self:GetColor("RepColor", REP_COLOR)
     local watched = C_Reputation and C_Reputation.GetWatchedFactionData and C_Reputation.GetWatchedFactionData()
     if not watched or not watched.factionID or watched.factionID == 0 then
-        return { mode = MODE_REP, name = L.PLU_SB_REP_NONE, level = "", current = 0, max = 1, color = repColor }
+        return { mode = MODE_REP, name = L.PLU_SB_REP_NONE, level = "", current = 0, max = 1, empty = true, color = repColor }
     end
 
     local factionID = watched.factionID
@@ -1243,7 +1251,7 @@ function Plugin:HousingRecord()
     local color = self:GetColor("HousingColor", HOUSE_COLOR)
     local favor, C = self._houseFavor, C_Housing
     if not favor or not (C and C.GetHouseLevelFavorForLevel) then
-        return { mode = MODE_HOUSE, name = L.PLU_SB_V2_SOURCE_HOUSE, level = "", current = 0, max = 1, color = color }
+        return { mode = MODE_HOUSE, name = L.PLU_SB_V2_SOURCE_HOUSE, level = "", current = 0, max = 1, empty = true, color = color }
     end
     local level = favor.houseLevel
     local minBar = C.GetHouseLevelFavorForLevel(level)
@@ -1265,6 +1273,7 @@ function Plugin:UpdateBar()
     self:_UpdateNumeral(record)       -- optional idle centre numeral
     self:_UpdateMPlusCenter()         -- sticky M+ timer (MythicPlus); owns the centre during a key
     self:_RefreshMPlusPanel()         -- M+ info panel (MythicPlus); bosses + stats to the side
+    self:ConcealOrb()                 -- reconcile the at-rest hide: tween to RestingTarget now _restEmpty / durability state is fresh
 end
 
 -- Guard the Lua division so a secret current/max holds the last displayed sweep instead of throwing (mirrors StatusBarBase:SetFill).
@@ -1272,6 +1281,12 @@ function Plugin:RenderFill(record)
     local fill, restedFill = self.frame.Fill, self.frame.RestedFill
     local color = record.color
     fill:SetSwipeColor(color.r, color.g, color.b, color.a or 1)
+    -- Nothing tracked: empty the ring (the conceal hides it at rest; this keeps it clean if it's revealed by a hover/event).
+    if record.empty then
+        CooldownFrame_SetDisplayAsPercentage(fill, 0)
+        restedFill:Hide()
+        return
+    end
     local current, max = record.current, record.max
     if issecretvalue(current) or issecretvalue(max) or not max or max <= 0 then
         restedFill:Hide()

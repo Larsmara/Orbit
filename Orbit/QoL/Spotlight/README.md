@@ -1,96 +1,35 @@
-# spotlight — universal search (qol)
+# Spotlight
 
-hotkey-driven universal search across bags, equipped gear, spellbook, toys, mounts, pets, heirlooms, professions, currencies, macros, and quest items. account-wide. no user-arranged ui.
+## Description
+Hotkey-driven universal search across bags, equipped gear, spellbook, toys, mounts, pets, heirlooms, professions, currencies, macros, quest items, and a curated `help` catalog. Account-wide QoL — no user-arranged UI.
 
-a `help` kind (gated behind the `help` / `orbit` prefix) also surfaces curated Orbit actions and explanations of non-obvious interactions — see [Index/Help/README.md](Index/Help/README.md).
+## Purpose
+One search box for everything the player owns or can do. Always enabled: `Spotlight:Enable()` runs unconditionally on `PLAYER_LOGIN`, there is no on/off toggle. Other modules toggle it via `Orbit.EventBus:Fire("ORBIT_SPOTLIGHT_TOGGLE")`; the key binding lives in `Orbit/Bindings.xml` at the addon root (WoW rejects `<Binding>` elsewhere).
 
-## layout
-
-```
-Spotlight.lua                   -- namespace, BINDING_* globals, Toggle, PLAYER_LOGIN auto-enable
-Spotlight.xml                   -- script load order bundle
-(bindings live in Orbit/Bindings.xml at the addon root — wow auto-loads that file and rejects <Binding> elsewhere.)
-Search/
-  Tokenize.lua                  -- Fold(name) → lowercase + diacritic strip (index-time, run once per entry)
-  Matcher.lua                   -- exact > prefix > word-start > substring, with optional fuzzy fallback
-Index/
-  IndexManager.lua              -- master index; per-source event registration; dirty-tracking + debounced rebuild
-  Favorites.lua                 -- right-click favorite toggle for kinds that support it (mounts, pets, toys)
-  Recents.lua                   -- recent-activation tracking for sort priority
-  MountTypeTags.lua             -- ground / flying / aquatic / dragonriding tags for mount filtering
-  ItemKeywords.lua              -- :Build(itemRef) → localized type/subtype/slot/binding/reagent terms folded into item lowerName so items search by attribute ("ring", "warbound", "crafting reagent"), not just name
-  Sources/                      -- one file per source. each defines kind, events, persistent, Build, signature.
-  Help/                         -- the "help" kind: authored actions + explainers. see Index/Help/README.md.
-UI/
-  ResultRow.lua                 -- secure-action-button row with orbit-skinned icon + label; mouse-only activation
-  RowPool.lua                   -- lazy row creation and reuse
-  ClickOutsideCatcher.lua       -- full-screen invisible mouse-down frame
-  SpotlightFrame.lua            -- open / close, cursor anchor, debounced query, EditBox input filter
-```
-
-## contracts
-
-**source module** (one file in `Index/Sources/`):
+## Implementation
+Data enters from one source file per kind in `Index/Sources/`. Each declares `kind`, `events`, `persistent`, optional `signature()`, and `Build()` returning entries:
 
 ```lua
-Sources.<kind> = {
-    kind       = "<kind>",               -- also set on each entry returned by Build
-    events     = { "EVENT_A", ... },     -- registered / unregistered by IndexManager
-    persistent = true | false,           -- true → cached in Orbit.db.AccountSettings.SpotlightIndex
-    signature  = function(self) ... end, -- only when persistent: invalidate cache when value changes
-}
-function Sources.<kind>:Build() return { <entry>, ... } end
+{ kind, id, name, lowerName, icon, secure = { type = "...", ... } | onClick = function(entry) end }
 ```
 
-**entry**:
+`Index/IndexManager.lua` registers every source's events, dirty-marks sources on event fire, and rebuilds the master list debounced (0.5 s). Persistent sources (mounts, pets, toys, heirlooms) cache in `Orbit.db.AccountSettings.SpotlightIndex`, version-gated (`CACHE_VERSION`) and invalidated when the source's declared signature changes; volatile sources rebuild from live APIs. Nothing builds at login — first build happens on first Open.
 
-```lua
-{
-    kind      = "<kind>",       -- matches source kind; used by enabledKinds filter and sort priority
-    id        = <number|string>,-- identity (itemID, spellID, mountID, macroIndex, etc.)
-    name      = "<display>",    -- user-visible name
-    lowerName = "<folded>",     -- Tokenize:Fold(name) — precomputed once
-    icon      = <fileID|path>,  -- texture for the row icon
-    secure    = { type = "...", <verb> = <value> }, -- for clickable activation; nil for non-secure rows
-    onClick   = function(entry) ... end,             -- non-secure fallback (currencies etc.)
-}
-```
+Query path: `UI/SpotlightFrame.lua` (center-anchored on `UIParent`, input debounced 50 ms) folds the query via `Search/Tokenize.lua` (lowercase + diacritic strip — the same fold precomputed into entry `lowerName` at index time), then `Search/Matcher.lua` ranks exact > prefix > word-start > substring with a bounded fuzzy fallback and `KIND_PRIORITY` ordering. Results render into `UI/ResultRow.lua` secure-action-button rows, pooled lazily by `UI/RowPool.lua`; `UI/ClickOutsideCatcher.lua` closes on outside mouse-down. Supporting index files: `ItemKeywords.lua` folds localized type/slot/binding terms into item `lowerName` so items match by attribute ("ring", "warbound"); `MountTypeTags.lua` adds ground/flying/aquatic/dragonriding tags; `Recents.lua` boosts recently activated entries; `Favorites.lua` handles right-click favoriting. The `help` kind is authored content — see `Index/Help/README.md`.
 
-## combat
+Kinds are data-driven from the `Spotlight.Kinds` table in `Spotlight.lua`: one row (`kind`, `settingKey`, `labelKey`, optional `aliasTokens` = extra exact-match prefix words, `prefixOnly` = hidden from un-prefixed searches) drives the config toggle in `Core/Config/Advanced/QoL.lua`, the enabled-kinds filter, and the row's kind label. Settings, all in `Orbit.db.AccountSettings`: `Spotlight_Src_<Source>` (per-source toggle), `Spotlight_MaxResults` (10–100, default 100), `Spotlight_Scale` (0.70–1.30; applied via `SetScale` on each Open, borders re-skinned against the new effective scale), `Spotlight_Fuzzy`, `Spotlight_HidePassives`, `SpotlightIndex` (internal cache).
 
-`Spotlight:Toggle()` and `SpotlightFrame:Open()` both short-circuit in combat with a print via `Orbit:Print(L.PLU_SPT_MSG_COMBAT)`. while spotlight is closed no secure attributes are rewritten, so combat lockdown cannot be tripped.
+Adding a source: new `Index/Sources/<Name>.lua` per the contract → `<Script>` line in `Spotlight.xml` before `IndexManager.lua` → one `Spotlight.Kinds` row → `PLU_SPT_SRC_<NAME>` key in every locale (`Localization/Domains/Plugins.lua`) → entry in `KIND_PRIORITY` (`Search/Matcher.lua`).
 
-## activation
+## Gotchas
+- Activation is mouse-only by design. Programmatic `row:Click()` from a Lua keyboard handler taints the secure dispatch (`ADDON_ACTION_FORBIDDEN` on protected verbs), so Spotlight never intercepts Enter/arrows — only hardware left-click fires the untainted secure attributes. The EditBox propagates non-typing keys so global bindings still work while focused.
+- `Toggle()`/`Open()` short-circuit in combat with a print, and the frame auto-closes on `PLAYER_REGEN_DISABLED`; while closed no secure attributes are rewritten, so combat lockdown can't be tripped. It also closes on `PLAYER_SPECIALIZATION_CHANGED` to drop stale spellbook attributes before they dispatch the old spec's spells.
+- `ResultRow:Bind` rebinds a source's bare `type` attribute as `type1`: `SecureActionButtonTemplate` treats bare `type` as an any-button fallback that would swallow right-click. With only `type1` set, right-click falls through to Lua `PostClick` → favorite toggle (mounts/pets/toys only). The handler mutates `entry.favorite` in place — the same table is shared with the master index and the SavedVariables cache.
+- Mount favoriting goes through display-index-based `C_MountJournal.SetIsFavorite`, so mounts hidden by the journal's filter can't be toggled; `canFavorite == false` mounts (faction-restricted etc.) are skipped silently.
+- Shift+left-click inserts a chat link; rows bind `shift-type1 = "macro"` with empty macrotext so the shift-click can't use/consume the entry. Left-drag picks the entry up onto the cursor and closes Spotlight.
 
-activation is mouse-only. left-clicking a row fires the hardware-originated secure dispatch, which is untainted and works for every entry kind — including `type="macro"` (`RunMacroText`). programmatic `row:Click()` from a lua keyboard handler would taint the dispatch and trigger `ADDON_ACTION_FORBIDDEN` on protected verbs, so spotlight does not intercept arrow keys or Enter. `ResultRow:Bind`'s `PostClick` closes spotlight after any activation; ESC closes via the EditBox's `OnEscapePressed`.
-
-right-click toggles the entry's favorite for kinds that support it (`mounts`, `pets`, `toys` — see [Index/Favorites.lua](Index/Favorites.lua)). sources declare their secure verb as bare `type = "..."`, but `SecureActionButtonTemplate` resolves that as a fallback for *any* button (including right) — so `Bind` rebinds `type` as `type1` when copying attributes onto the row. with only `type1` set, right-click has no secure attribute to dispatch and falls through to `PostClick` in lua. the handler mutates `entry.favorite` in place (the same table is shared with IndexManager's master list and the persistent SavedVariables cache), updates the star texture, and leaves spotlight open. right-click on any other kind is a no-op. mounts whose `canFavorite` flag is false (faction-restricted, etc.) are skipped silently. mounts hidden by the journal's filter cannot be toggled here because `C_MountJournal.SetIsFavorite` is index-based on the *displayed* list.
-
-## performance
-
-- lazy — indexers don't run at login. first build happens on first Open (or on source invalidation after Enable).
-- persistent cache in `Orbit.db.AccountSettings.SpotlightIndex` for account-wide sources (mounts, pets, toys, heirlooms). version-gated; invalidated by source-declared signature change.
-- volatile sources (bags, equipped, spellbook, macros, quest items, currencies, professions) rebuild from live apis on each invalidation — wow events drive rebuilds, not the search loop.
-- query path — `Tokenize:Fold` on the input once, then a single pass over the master index. `Matcher` does a cheap substring check and a bounded fuzzy pass only when substring misses. debounced by 50 ms on `OnTextChanged`.
-- result rows are created lazily up to the current `Max Results` count and reused across searches.
-
-## settings
-
-all settings are account-scoped in `Orbit.db.AccountSettings`:
-
-- (Spotlight is always enabled — there is no module on/off toggle; `Spotlight:Enable()` runs unconditionally on `PLAYER_LOGIN`.)
-- `Spotlight_Src_<Source>` (boolean, default true) — per-source toggle; disabled sources are filtered out of query results. includes `Spotlight_Src_Help` for the help category.
-- `Spotlight_MaxResults` (10 – 100, default 100)
-- `Spotlight_Scale` (0.70 – 1.30 in 0.05 steps, default 1.00) — applied via `root:SetScale` on each Open; borders re-skin against the new effective scale so edge thickness stays at constant physical pixels
-- `Spotlight_Fuzzy` (boolean, default true)
-- `SpotlightIndex` (internal cache)
-
-## adding a new source
-
-1. create `Index/Sources/<NewSource>.lua` following the source contract above.
-2. add a `<Script>` line to [Spotlight.xml](Spotlight.xml) in the Sources block before `IndexManager.lua` loads (order doesn't affect behaviour, but convention is alphabetical).
-3. add a row to the `Spotlight.Kinds` table in [Spotlight.lua](Spotlight.lua) (`{ kind, settingKey, labelKey }`). this single row data-drives the category toggle in [QoL.lua](../../Core/Config/Advanced/QoL.lua), the enabled-kinds filter in [UI/SpotlightFrame.lua](UI/SpotlightFrame.lua), and the row's kind label — none need a manual edit.
-4. add a matching `PLU_SPT_SRC_<NAME>` key to [Orbit/Localization/Domains/Plugins.lua](../../Localization/Domains/Plugins.lua) in every locale.
-5. add the new kind to `KIND_PRIORITY` in [Search/Matcher.lua](Search/Matcher.lua).
-
-a `Spotlight.Kinds` row may also carry `aliasTokens = { "..." }` (extra exact-match prefix words that select the kind) and `prefixOnly = true` (the kind is excluded from un-prefixed searches and only appears behind its own token). the `help` kind uses both — `help`/`orbit` reach it, and it never pollutes item/spell results.
+## References
+- `Index/Help/README.md` — the authored help kind.
+- `../README.md` — QoL conventions (account-wide settings, loader pattern).
+- `Core/Config/Advanced/QoL.lua` — settings panel.
+- `/wow-frames` — secure templates and taint rules behind the activation design.

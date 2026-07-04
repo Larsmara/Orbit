@@ -34,7 +34,7 @@ function Plugin:_AnimApply(progress)
     content:ClearAllPoints()
     if self._animMode == ANIM_NONE then
         content:SetAllPoints(frame)
-        content:SetAlpha(1)
+        content:SetAlpha(progress)   -- 1 at rest normally; the empty-data hide drives it to 0 with no slide/fade motion
         return
     end
     if self._animMode == ANIM_FADE then
@@ -63,9 +63,12 @@ function Plugin:_RotateRevealOwnsRing()
 end
 
 local function RestingTarget(plugin)
+    if Orbit:IsEditMode() then return 1 end
+    -- Anything actioned keeps the orb up: hover, a flourish, M+, or a durability warning.
+    if plugin._hovered or plugin._event ~= nil or plugin._mplusActive or plugin._mplusResults or plugin:_DuraWarnActive() then return 1 end
+    if plugin._restEmpty then return 0 end   -- nothing tracked: conceal the ring even at ANIM_NONE (data-driven, separate from the cosmetic slide/fade)
     local mode = plugin:GetSetting(plugin.system, "Animation") or ANIM_NONE
-    if mode == ANIM_NONE or Orbit:IsEditMode() then return 1 end
-    if plugin._hovered or plugin._event ~= nil or plugin._mplusActive or plugin._mplusResults then return 1 end
+    if mode == ANIM_NONE then return 1 end
     return 0
 end
 

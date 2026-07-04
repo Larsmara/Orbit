@@ -1,53 +1,40 @@
-# cooldown manager
+# CooldownManager
 
-hooks into blizzard's native cooldown viewer system to provide skinned, repositionable cooldown displays.
+## Description
+Hooks Blizzard's native cooldown viewer system (`EssentialCooldownViewer`, `UtilityCooldownViewer`, `BuffIconCooldownViewer`, `BuffBarCooldownViewer`) to provide skinned, repositionable cooldown displays, plus drag-and-drop injection of custom spells/items into the essential/utility viewers.
 
-## purpose
+## Purpose
+Keeps Blizzard's viewers as the data source (which spells, when they're on cooldown) while Orbit owns position, layout, skin, text, and glows. Fully decoupled from the Tracked plugin, which renders user-authored surfaces from scratch.
 
-provides four viewer types: essential cooldowns (class rotation), utility cooldowns (defensive/utility), buff icons (tracked buffs), and buff bars (tracked buff status bars). also supports drag-and-drop injection of custom spells/items into essential/utility viewers.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| CooldownManager.lua | main plugin. anchor creation, settings application, viewer map, spec data helpers. |
-| CooldownLayout.lua | icon grid layout engine. handles row/column math for cooldown viewers. |
-| CooldownText.lua | timer/charges/stacks/keybind text rendering, font helpers, canvas preview setup. |
-| CooldownGlows.lua | pandemic window glow hooks and proc glow hooks for CDM buttons. delegates all glow rendering and state management to `GlowController`. hooks `ShowPandemicStateFrame`/`HidePandemicStateFrame` for alpha-toggling and `ActionButtonSpellAlertManager` for proc glows. |
-| CooldownSettings.lua | settings schema builder with sub-tabs (layout, glow, colours). |
-| CooldownViewerHooks.lua | hooks into blizzard's cooldown viewer api (`C_CooldownViewer`). |
-| ViewerInjection.lua | drag-and-drop item/spell injection into essential/utility viewers. creates cdm-owned frames parented to the orbit anchor (not blizzard's secure viewer) to avoid tainting the viewer's secure context; positioned relative to native icons via `afterNativeIndex` using `SetPoint(..., blizzFrame, ...)` which does not require shared parentage. per-spec persistence via `GetSpecData`/`SetSpecData`. shift-right-click removal. equipment slot tracking for trinkets (auto-updates on gear change). Spotlight's **Flush Cooldowns** action clears all injected icons. owns its own cursor poll (`StartCursorWatcher`) so the click-enable/drop-zone flow is self-contained — previously this was driven by a shared cursor watcher in the (now deleted) Tracked plugin's `TrackedUpdater.lua`, and the hidden coupling silently broke drop handling the moment that file was removed. delegates cursor → spell/item resolution and the `BuildInjectedItemEntry` shape to `Orbit.CooldownDragDrop` (`Core/Shared/CooldownDragDrop.lua`). |
+| CooldownManager.lua | plugin (`Orbit_CooldownViewer`); one Orbit anchor per viewer, `VIEWER_MAP` (system index → Blizzard viewer + anchor), spec-data helpers |
+| CooldownViewerHooks.lua | `hooksecurefunc` on viewer item mixins (`OnCooldownIDSet`, `OnActiveStateChanged`) and on viewer `UpdateLayout`/`RefreshLayout`/`SetPoint`/`Hide` to re-layout and re-anchor |
+| CooldownLayout.lua | icon grid math; out-of-combat spellID caching; native timer color curves |
+| CooldownText.lua | timer/charges/stacks/keybind text, fonts, canvas preview setup |
+| CooldownGlows.lua | pandemic glows (hooks `ShowPandemicStateFrame`/`HidePandemicStateFrame`) and proc glows (`ActionButtonSpellAlertManager`), both rendered by `GlowController`; per-spell glow/colour/alert store; shift-right-click menu via `Orbit.SpellGlows:OpenMenu` |
+| CooldownSettings.lua | settings schema with layout/glow/colour sub-tabs |
+| ViewerInjection.lua | drag-drop injection; owns its cursor watcher; per-spec persistence |
 
-## shared utilities (in Core/Shared/)
+Shared dependencies in `Core/Shared/`: `CooldownUtils.lua` (icon dimensions, `BuildSkinSettings` with `iconBorder = true`), `TooltipParser.lua` (active/cooldown duration extraction), `CooldownDragDrop.lua` (cursor → spell/item resolution, `BuildInjectedItemEntry`).
 
-| file | responsibility |
-|---|---|
-| CooldownUtils.lua | icon dimension calculation, skin settings builder. `BuildSkinSettings` includes `iconBorder = true` to opt into `GlobalSettings.IconBorderStyle`. |
-| TooltipParser.lua | tooltip scanning for active duration and cooldown duration extraction. |
-| CooldownDragDrop.lua | `Orbit.CooldownDragDrop` — cursor → cooldown ability resolver, `HasCooldown`/`IsDraggingCooldownAbility`, equipment-slot lookup, cursor texture, and saved-data entry builders. ViewerInjection uses this for every drag-drop decision; previously duplicated inline. |
+Data lands per character and per spec in `OrbitDB` spec data via `GetSpecData`/`SetSpecData`: injected items (`InjectedItems`) and the per-spell glow/colour/alert store keyed by cooldownID (`GetSpellGlowValue`/`SetSpellGlowValue`/`SpellGlowLookup`). Injected frames are CDM-owned, parented to the Orbit anchor, and positioned relative to native icons via `afterNativeIndex` with cross-parent `SetPoint`. Equipment-slot tracking auto-updates injected trinkets on gear change; Spotlight's Flush Cooldowns action clears all injected icons.
 
-## architecture
+## Gotchas
+- The glow store lives in spec data, never `GlobalSettings` — that is profile-cloned theme data, so a profile or spec switch would wipe it.
+- Injected frames must never be parented to Blizzard's secure viewer (taint); `SetPoint` against a native icon works fine without shared parentage.
+- `ViewerInjection` owns its own `StartCursorWatcher`. It used to piggyback on a shared cursor watcher in the old Tracked plugin's `TrackedUpdater.lua`, and drop handling silently broke the moment that file was deleted — keep the flow self-contained.
+- Proc alert sounds fire once per proc edge and are cooldownID-stamped so button reassignment re-arms them.
+- Zero dependencies on `Orbit_Tracked`. Sub-files reach the parent via `Orbit:GetPlugin("Orbit_CooldownViewer")` — acceptable intra-domain reference.
+- Cooldown update paths run on `OnUpdate`: no allocations, no string concatenation.
+- Glow types come from `Constants` (`PandemicGlow.Type`, `Glow.Type`); never hardcode glow type ids.
 
-```mermaid
-graph TD
-    CDM[CooldownManager] --> Essential[essential viewers]
-    CDM --> Utility[utility viewers]
-    CDM --> BuffIcon[buff icon viewers]
-    CDM --> BuffBar[buff bar viewers]
-    CDM --> Layout[CooldownLayout]
-    CDM --> Text[CooldownText]
-    CDM --> Glows[CooldownGlows]
-    CDM --> Settings[CooldownSettings]
-    CDM --> Hooks[CooldownViewerHooks]
-    CDM --> Injection[ViewerInjection]
-    CDM -.-> SharedUtils[Core/Shared/CooldownUtils]
-    CDM -.-> SharedParser[Core/Shared/TooltipParser]
-```
+## Secrets
+Live `GetSpellID` reads on viewer items are secret in combat. `CooldownLayout` caches `orbitCachedSpellID` out of combat (drop-time capture); every consumer — glow lookups, TTS alert name resolution, aura matching — reads the cache and guards comparisons with `issecretvalue` first (`cached == spellID`, `wasSetFromAura`). Timer text coloring goes through native color curves (`ColorCurve:ToNativeColorCurve`) so remaining-time never touches Lua arithmetic; desaturation uses a static `C_CurveUtil` curve.
 
-## rules
-
-- all sub-files access the parent plugin via `Orbit:GetPlugin("Orbit_CooldownViewer")` (intra-domain reference — acceptable)
-- cooldown update functions run on `OnUpdate` — they must be performant (no allocations, no string concat)
-- glow types are defined in `Constants.PandemicGlow.Type`. do not hardcode glow type ids
-- injected icon data is stored per-character and per-spec in `OrbitDB.SpecData[charKey][specID]` via `GetSpecData`/`SetSpecData`
-- this plugin has zero dependencies on the Tracked plugin (`Orbit_Tracked`). the two are fully decoupled
+## References
+- `Core/Shared/README.md` (CooldownUtils, CooldownDragDrop, GlowController, SpellGlows, TooltipParser).
+- `Plugins/Tracked/README.md` (the decoupled sibling), `Plugins/CooldownViewerExtensions/README.md`.
+- Skills: `/wow-secrets` (C_CooldownViewer classification), `/ki-abilities`, `/wow-frames`.
+- Blizzard source: `agent/wow-ui-source/` Blizzard_CooldownViewer.

@@ -153,8 +153,7 @@ function Plugin:ApplySettings(frame)
 
     if frame.Name then
         local textSize = 12
-        frame.Name:SetFont(fontPath, textSize, Orbit.Skin:GetFontOutline())
-        Orbit.Skin:ApplyFontShadow(frame.Name)
+        Orbit.Skin:SetFontWithShadow(frame.Name, fontPath, textSize)
         frame.Name:ClearAllPoints()
         frame.Name:SetPoint("CENTER", 0, 0)
         frame.Name:SetJustifyH("CENTER")

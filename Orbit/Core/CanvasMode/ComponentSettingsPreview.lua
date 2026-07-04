@@ -310,8 +310,7 @@ function Settings:ApplyStyle(container, key, value)
     if key == "FontSize" and visual.SetFont then
         local font, _, flags = visual:GetFont()
         flags = (flags and flags ~= "") and flags or Orbit.Skin:GetFontOutline()
-        visual:SetFont(font, value, flags)
-        Orbit.Skin:ApplyFontShadow(visual)
+        Orbit.Skin:SetFontWithShadow(visual, font, value, flags)
         C_Timer.After(0.01, function()
             if container and visual and visual.GetStringWidth then
                 local cScale = container:GetEffectiveScale()
@@ -325,8 +324,7 @@ function Settings:ApplyStyle(container, key, value)
         if fontPath then
             local _, size, flags = visual:GetFont()
             flags = (flags and flags ~= "") and flags or Orbit.Skin:GetFontOutline()
-            visual:SetFont(fontPath, size or 12, flags)
-            Orbit.Skin:ApplyFontShadow(visual)
+            Orbit.Skin:SetFontWithShadow(visual, fontPath, size or 12, flags)
             C_Timer.After(0.01, function()
                 if container and visual and visual.GetStringWidth then
                     local cScale = container:GetEffectiveScale()

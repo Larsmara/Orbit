@@ -495,8 +495,7 @@ function Mixin:UpdateGroupPosition(frame, plugin)
 
     -- Apply global font to GroupPositionText, then re-apply Canvas Mode overrides
     local fontPath = LSM:Fetch("font", Orbit.db.GlobalSettings.Font) or "Fonts\\FRIZQT__.TTF"
-    frame.GroupPositionText:SetFont(fontPath, GROUP_POSITION_FONT_SIZE, Orbit.Skin:GetFontOutline())
-    Orbit.Skin:ApplyFontShadow(frame.GroupPositionText)
+    Orbit.Skin:SetFontWithShadow(frame.GroupPositionText, fontPath, GROUP_POSITION_FONT_SIZE)
     local positions = GetBatchedPositions(frame, plugin)
     local overrides = positions and positions.GroupPositionText and positions.GroupPositionText.overrides
     if overrides then

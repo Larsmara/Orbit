@@ -1,44 +1,40 @@
-# skinning
+# Skinning
 
-visual rendering pipeline. transforms settings into pixels.
+## Description
+The visual rendering pipeline: borders, masks, status-bar textures, fonts, gradients, icon skinning, cast/class bars, action buttons. Transforms settings into pixels.
 
-## purpose
+## Purpose
+Plugins never build visual elements directly — they call `Orbit.Skin` methods, so every frame renders identically from the one theme (`Orbit.db.GlobalSettings`, read via `Orbit:GetTheme` / `Skin:ResolveStyle`).
 
-all visual rendering — borders, textures, status bar coloring, icon styling, cast bar creation, and action button skinning — is centralized here. plugins never create visual elements directly; they call skinning methods.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| Skin.lua | core border/mask skinning api: `SkinBorder`, `CreateBackdrop`, `DefaultSetBorderHidden`, the nine-slice/rounded border + mask-registry primitives, border-colour/tint resolution, and the LSM border-reconciliation timer. (Status-bar, font, gradient-background, and media-validation functions split into sibling files below — they attach to the same `Orbit.Skin` table.) `GetActiveBorderStyle` resolves frame border style, `GetActiveIconBorderStyle` resolves icon border style (action bars, cooldown manager, and tracked abilities). `ApplyIconGroupBorder`/`ClearIconGroupBorder` wraps an icon container in a single border when Icon Padding = 0. **border style:** four built-in styles — `"orbit"`, a flat `WHITE8x8` outline driven by a single Border Size slider (`0`-`5`; `0` = no border), plus `"orbit-soft"`/`"orbit-rounded"`/`"orbit-rounder"` (labels "Orbit Pixel Soft"/"Rounded"/"Rounder"; slice radius 4/8/12px, all a 2px line) — rounded "pixel" borders that round the frame and its bars. `ResolveStyle` returns `nil` for the built-in `"orbit"` style and for unresolved LibSharedMedia borders — a `nil` styleEntry is the pipeline-wide signal for the flat pixel border (`SkinBorder`'s flat path, `GroupBorder`'s `isPixelMode`, `HighlightBorder`'s `"pixel"` path, `ApplyIconGroupBorder`'s else branch), so it renders with no extra branching. The two rounded styles resolve (via `Constants.BorderStyle.Rounded`) to a slice styleEntry `{ edgeFile, mask, sliceMargin, rounded = true }` — their thickness is baked into the texture, so they show no size slider. An `lsm:`-keyed LibSharedMedia border resolves to `{ edgeFile = ... }`, drawn as an edge-file backdrop by `ApplyNineSliceBorder` (frame edge-size/offset come from the `BorderEdgeSize`/`BorderOffset` sliders). Edge-file textures and the rounded slice border are grayscale and vertex-tinted by `BorderColor` via `ResolveBorderTint`, which returns nil for the "no tint" state (`{ none = true }` — the default; set by right-clicking the colour swatch) so the texture renders its natural art; any real colour, black included, tints. An explicit `color` arg to `SkinBorder` overrides the resolved tint on **all** paths — flat (`ApplyPixelBackdrop`), edge-file (`ApplyNineSliceBorder`), and rounded (`ApplyRoundedBorder`) — so a caller can keep the user's selected style but recolour it (the gold bonus loot-roll border); `SkinBorder` clones the style table before setting `.color` so the shared `Constants.BorderStyle` entry is never mutated. The color swatch is enabled for `lsm:` and rounded styles. `ResolveBorderColor` still maps `none` to black for solid-fill borders (pixel WHITE8x8, tick marks) that always need a colour. **rounded surface-mask system:** the two rounded styles re-activate the slice-mask pipeline. `RegisterMaskedSurface(frame, tex)` records the fill/bg/icon surfaces a frame owns (~24 sites: unit bars, cast bars, tracked bars, cooldown/damage-meter previews). When a rounded style is active, `SkinBorder` → `ApplyRoundedBorder` renders the slice border on an inset overlay (`_RenderSliceTexture`) and `ApplyRoundedMaskToSurfaces` attaches a shared `SetTextureSliceMargins` mask (`EnsureSliceMask`) to every registered surface via `_SetSurfaceMask` (one mask per surface, removed before re-add). `GroupBorder` does the same over the merged bounding box (`_groupRoundedMask`), so a merged group rounds only its four outer corners; un-merging restores each frame's own mask. The flat `"orbit"` and edge-file `lsm:` styles attach no mask (`ClearRoundedMaskFromSurfaces`/`_ClearGroupRoundedMask` clear any stale one). `GetRoundedSwipeTexture` returns the active rounded style's mask texture, used as the cooldown swipe fill so Orbit's own cooldown swipes round too (Blizzard-named cooldowns stay square to avoid taint). **Tiled fills** — Orbit's absorb/necrotic patterns tile via **UV-repeat** (`SetTexCoord` > 1 over a `REPEAT`-wrapped texture, constant tile scale, no shear) rather than `SetHorizTile`. `SetHorizTile` textures cannot be corner-masked by WoW; UV-repeat ones can, so the patterns are registered masked surfaces (`UnitButton.lua`) and round under a rounded style like any other fill. |
-| MediaValidation.lua | `IsMediaFileValid(path)` reports whether a resolved font/texture path still exists on disk via `C_UIFileAsset.IsKnownFile` (12.0.7+) — the media pickers use it to flag LSM media whose file was removed while its registration lingers; on clients without the API it returns `true`, so it never regresses. |
-| StatusBarSkin.lua | status-bar texture, overlay-tiling, and absorb-fill skinning: `SkinStatusBar`, `AddOverlay`, `ApplyAbsorbTexture`. `ApplyAbsorbTexture` sets an absorb bar's fill: the Orbit absorb textures (`Orbit Absorb`, `Orbit Honeycomb Absorb`) render as plain stretched statusbar fills — maskable, so they round under a rounded border. `TILING_FILLS` is currently empty; a name added to it would instead draw via the bar's `TiledPattern` (UV-repeat — `REPEAT` wrap + `SetTexCoord` > 1, not `SetHorizTile` — so it stays maskable while holding a constant tile scale), with all other textures staying plain stretched fills. `OVERLAY_RENDER` maps each overlay texture to its blend/tile mode. |
-| FontSkin.lua | font styling: `GetFontOutline`, `GetFontShadow`, `ApplyFontShadow`, `SkinText`, `ApplyUnitFrameText`. resolves outline/shadow from `GlobalSettings`; `ApplyUnitFrameText` pixel-snaps the LEFT/RIGHT text inset. |
-| GradientBackground.lua | `ApplyGradientBackground`, `GetBackgroundColor`. `ApplyGradientBackground` paints the global "Background" colour curve (`GlobalSettings.UnitFrameBackdropColourCurve`, Textures tab) onto a frame's `.bg` texture, rendering multi-pin curves as a gradient; `GetBackgroundColor` resolves that same setting to a single flat colour for solid backdrop surfaces that can't take a gradient — both fall back to `Constants.Colors.Background`. |
-| HighlightBorder.lua | tinted border overlay for aggro/selection/dispel indicators: `ApplyHighlightBorder`, `ClearHighlightBorder`. respects group border merge state. |
-| SelectionOutline.lua | flat pixel-perfect outline overshooting a frame (not the themed border): `ApplySelectionOutline(frame, storageKey, color)`, `ClearSelectionOutline`. shared by Canvas Mode component selection and the datatext drawer-active highlight so both read identically. `Skin.SELECTION_ACCENT` is the canonical bright-green default. |
-| GroupBorder.lua | group border merging for anchored frames at zero padding: `UpdateGroupBorder`, `ClearGroupBorder`, `RefreshAllGroupBorders`, `DeferGroupBorderRefresh`. includes debounced `ORBIT_BORDER_LAYOUT_CHANGED` listener. `SuspendMergeGroup(frame)` / `ResumeMergeGroup(members)` flag a whole merge group `_mergeSuspended` so it un-merges for the duration of a drag (Edit Mode `Drag.lua` calls them on drag start/stop); a suspended frame is excluded from merge walks and rebuilds individually. |
-| Icons.lua | icon frame skinning: borders, zoom, desaturation, glow anchoring. supports `iconBorder` flag in settings to opt into `GlobalSettings.IconBorderStyle` NineSlice routing. when `padding == 0`, per-icon NineSlice is skipped in favor of container-level group border. |
-| IconLayout.lua | icon grid layout math (rows, columns, spacing). |
-| IconMonitor.lua | monitors icon visibility changes for layout recalculation. |
-| CastBar.lua | cast bar frame creation (`Create`) and settings application (`Apply`). |
-| ClassBar.lua | class power bar skinning (combo points, runes, etc.). |
-| ActionButtonSkinning.lua | action bar button visual overrides (border, highlight, keybind text). |
-| Masque.lua | masque library integration for third-party icon skinning. |
-| VisualsExtendedMixin.lua | extended visual indicators (rare/elite icon, level badge). |
-| Skins.xml | xml template definitions. |
+| Skin.lua | border/mask core: `SkinBorder`, `CreateBackdrop`, style + tint resolution, mask registry, LSM border reconciliation |
+| StatusBarSkin.lua | `SkinStatusBar`, `AddOverlay`, `ApplyAbsorbTexture`; `OVERLAY_RENDER` blend/tile map |
+| FontSkin.lua | outline/shadow from GlobalSettings: `GetFontOutline/Shadow`, `ApplyFontShadow`, `SkinText`, `ApplyUnitFrameText` |
+| GradientBackground.lua | paints the `UnitFrameBackdropColourCurve` onto `.bg` (gradient) or resolves it flat (`GetBackgroundColor`) |
+| HighlightBorder.lua | tinted overlay for aggro/selection/dispel; respects group-border merge state |
+| SelectionOutline.lua | flat pixel outline (`ApplySelectionOutline`); `Skin.SELECTION_ACCENT` shared by Canvas selection + datatext drawer |
+| GroupBorder.lua | border merging for anchored frames at zero padding; `SuspendMergeGroup`/`ResumeMergeGroup` |
+| Icons.lua / IconLayout.lua / IconMonitor.lua | icon skinning, grid math, visibility-driven relayout |
+| CastBar.lua / ClassBar.lua / ActionButtonSkinning.lua / Masque.lua / VisualsExtendedMixin.lua | cast bars, class power, action buttons, Masque bridge, rare/elite badges |
+| MediaValidation.lua | `IsMediaFileValid` via `C_UIFileAsset.IsKnownFile` (12.0.7+; returns true on older clients) |
 
-## adding a new skin function
+Border pipeline: `ResolveStyle("BorderStyle"/"IconBorderStyle")` maps the theme key to a styleEntry — `nil` for the flat built-in `"orbit"` style and unresolved LSM borders, `{ edgeFile }` for `lsm:` borders (drawn by `ApplyNineSliceBorder`, sized by the `BorderEdgeSize`/`BorderOffset` sliders), or a slice entry `{ edgeFile, mask, sliceMargin, rounded = true }` (via `Constants.BorderStyle.Rounded`) for `"orbit-soft"/"orbit-rounded"/"orbit-rounder"`. `SkinBorder` dispatches to flat pixel backdrop / edge-file / `ApplyRoundedBorder`. Tint resolves through `ResolveBorderTint` (`BorderColor`/`IconBorderColor`); an explicit `color` arg to `SkinBorder` overrides on all three paths (e.g. the gold bonus loot-roll border).
 
-1. add the function to `Skin.lua` as a method on `Orbit.Skin`
-2. accept a frame and a settings table. apply visuals. return nothing.
-3. all numeric parameters must come from constants or settings, never hardcoded
-4. add the new file to `Core/Skinning/Skins.xml` as a `<Script file="NewFile.lua"/>` entry; ensure it loads after its dependencies
+Rounded mask system: frames register their fill/bg/icon textures via `RegisterMaskedSurface(frame, tex)` (~24 sites). Under a rounded style, `ApplyRoundedBorder` renders the slice border on an inset overlay and attaches a shared `SetTextureSliceMargins` mask to every registered surface; `GroupBorder` masks the merged bounding box so a merge group rounds only its four outer corners, restoring per-frame masks on un-merge. Flat and LSM styles clear stale masks. `GetRoundedSwipeTexture` feeds Orbit-built cooldown swipes so they round too.
 
-## rules
+Group borders merge on a debounced `ORBIT_BORDER_LAYOUT_CHANGED` listener; Edit Mode `Drag.lua` calls `SuspendMergeGroup`/`ResumeMergeGroup` so groups un-merge for the duration of a drag. `ApplyIconGroupBorder` wraps an icon container in one border when Icon Padding = 0 (per-icon nine-slice is skipped).
 
-- skinning functions are **idempotent**. calling them twice with the same settings produces the same result.
-- no frame creation outside this domain (except for internal overlay/backdrop frames)
-- pixel-snapping must use `Orbit.Engine.Pixel:Snap()` or `Orbit.Engine.Pixel:Multiple()`
-- border colors use `{ r, g, b, a }` tables, never raw numbers
-- all constants at file top. no magic numbers.
+## Gotchas
+- A `nil` styleEntry is the pipeline-wide "flat pixel border" signal — `SkinBorder`'s flat path, `GroupBorder.isPixelMode`, `HighlightBorder`'s pixel path, and `ApplyIconGroupBorder`'s else branch all key on it. Preserve that invariant when adding paths.
+- `SkinBorder` clones the style table before setting `.color` — never mutate the shared `Constants.BorderStyle` entries.
+- `ResolveBorderTint` nil means "no tint" (`{ none = true }`, the default; set by right-clicking the swatch) — the texture renders its natural art. Any real color, black included, tints. `ResolveBorderColor` still maps none → black for solid fills (pixel WHITE8x8, tick marks) that must have a color.
+- Tiled fills (absorb/necrotic patterns) use UV-repeat — `REPEAT` wrap + `SetTexCoord` > 1 — never `SetHorizTile`: WoW cannot corner-mask `SetHorizTile` textures, so they would break under rounded styles. `StatusBarSkin.TILING_FILLS` routes a named texture through the bar's `TiledPattern` this way; it is currently empty (the Orbit absorb textures render as plain stretched fills).
+- Blizzard-named cooldowns keep square swipes deliberately (taint); only Orbit-built cooldowns take the rounded swipe texture.
+- Rounded styles bake thickness into the texture (no size slider); the flat style is driven by the `PixelBorderSize` slider (0–5, 0 = none).
+- Skinning functions are idempotent — same settings twice, same pixels. Pixel-snap only via `Engine.Pixel:Snap`/`Multiple`. Border colors are `{ r, g, b, a }` tables. No frame creation outside this domain except internal overlays/backdrops.
+- New files: add to `Skins.xml` after their dependencies; new skin functions accept `(frame, settings)` and return nothing.
+
+## References
+/pixel (dimensions, offsets, pixel-perfect rendering), `Core/Shared/Constants.lua` (`BorderStyle`), `Core/Color/README.md` (curve sampling), `Config/Panels/Tabs/GlobalTab.lua` (the style pickers driving this pipeline).

@@ -1,168 +1,32 @@
-# raid panel
+# RaidPanel
 
-dock-style raid-leader panel: difficulty (shows current), ready check, role poll, 8 world markers, and ping restriction. visible only when in a group AND the player has lead or assist.
+## Description
+Dock-style raid-leader panel: current difficulty, ready check, role poll, 8 target/world markers, clear markers, and ping restriction, rendered as circular (or square) icons with arc-wrap layout.
 
-## purpose
+## Purpose
+One-click access to the raid-management actions a leader uses constantly, replacing Blizzard's CompactRaidFrameManager. Visible when in a group with lead or assist (or in the Always Show display mode).
 
-one-click access to the raid-management actions a leader uses constantly. circular icons with dark-grey background fill and silver border. arc-wrap tunable from settings, same control portal exposes.
+## Implementation
+Slot definitions, marker sprite mapping, and `WORLD_MARKER_ORDER` live in `RaidPanelData.lua`. `RaidPanel.lua` is the plugin root: it builds the dock, parks `CompactRaidFrameManager` via `OrbitEngine.NativeFrame:Park` (unparked in `OnDisable`), applies VE alpha via `Orbit.OOCFadeMixin:ApplyOOCFade(dock, self, 1)`, and re-evaluates visibility on `GROUP_ROSTER_UPDATE`, `PARTY_LEADER_CHANGED`, `PLAYER_ENTERING_WORLD`, `PLAYER_DIFFICULTY_CHANGED`, and `PLAYER_REGEN_ENABLED`. Icons come from the `RaidPanelIcon.lua` factory (`SecureActionButtonTemplate` buttons; secure attrs for markers, `PostClick` for menus/actions/sheen). `RaidPanelLayout.lua` is pure arc-wrap math (mirrors PortalLayout); orientation is auto-detected from screen position via `Frame:RegisterOrientationCallback`. `RaidPanelVisibility.lua` owns `ShouldShow()` (in-group + lead/assist) and `IsRaidLeaderTier()` (drives Always Show's slot set). `RaidPanelMenus.lua` builds the Difficulty and Ping Restriction dropdowns with `MenuUtil`.
 
-## layout
+Settings (`DisplayShape`, `DisplayMode`, `IconSize`, `Spacing`, `Compactness`) follow PluginMixin; shared labels reuse `PLU_PORTAL_*`, panel-specific keys use `PLU_RAIDPANEL_*`.
 
-```
-Plugins/RaidPanel/
-  RaidPanelData.lua          slot definitions, marker sprite mapping, difficulty/ping option lists, GetCurrentDifficultyAtlases() (returns { normal, pressed } for the live difficulty)
-  RaidPanelLayout.lua        pure arc-wrap math (mirrors PortalLayout)
-  RaidPanelVisibility.lua    ShouldShow() — in-group AND (leader or assist)
-  RaidPanelMenus.lua         MenuUtil dropdowns: Difficulty (dungeon/raid) + Ping Restriction
-  RaidPanelIcon.lua          circular icon factory; PostClick opens menus / runs actions, secure attrs bind raidtarget & worldmarker dispatch
-  RaidPanel.lua              plugin root: registration, dock frame, layout integration, events, lifecycle
-  RaidPanel.xml              load-order bundle
-```
+## Gotchas
+- Marker slots use Blizzard's built-in `raidtarget` (`type1`) and `worldmarker` (`shift-type1`) secure actions. Never override `OnClick` on any slot — it replaces the template's secure dispatch and breaks every marker slot sharing the factory.
+- The world-marker attribute must be the suffixed `shift-marker1`. Bare `shift-marker` is not in the `SecureButton_GetModifiedAttribute` cascade and silently falls through to plain `marker`, placing the raid-target index as a world marker.
+- The two marker index sets differ: `marker` is raid-target sprite order 1..8; `shift-marker1` holds `WORLD_MARKER_ORDER[i]` (`{5,6,3,2,7,1,4,8}`), the inversion of the live `PlaceRaidMarker(i)→symbol` map read in-game. It is not Blizzard's `WORLD_RAID_MARKER_ORDER` (that feeds a different CRF indirection).
+- `ClearRaidMarker()` / `RemoveRaidTargets()` are protected — they throw `ADDON_ACTION_FORBIDDEN` from insecure `PostClick` even during a hardware event. Clear Markers is a secure `macro` whose `macrotext1` `/click`s two hidden delegate buttons (`EnsureClearDelegates`, created once out of combat) that run `worldmarker action=clear` and `raidtarget action=clear-all` on a fully secure path.
+- Never hardcode slash tokens (`/tm`, `/wm`, `/clearworldmarker`) in a macrotext — they are localized via `GlobalStrings` and silently no-op on non-enUS clients. `SECURE_ACTIONS` type/attribute names and `/click` are locale-stable.
+- Ready Check / Role Poll carry no `type` attribute: `DoReadyCheck` / `InitiateRolePoll` are not protected, so plain `PostClick` calls are valid — no macro needed.
+- Secure attributes are written outside combat only; `pendingRefresh` defers rebinds and visibility changes to `PLAYER_REGEN_ENABLED`. The dock itself is an insecure `Frame`; only the icon children are secure.
+- `GM-raidMarker-reset` has no `-hover`/`-pressed` atlas variants. Setting a nonexistent atlas blanks the highlight (no mouseover) and the pushed texture (icon vanishes on click) — the slot deliberately falls back to the yellow-tint highlight; don't add variants back.
+- In Always Show mode a shift-click world marker without lead/assist plays `Icon.PlayDenied` (red pulse + error sound) from `PostClick`; the secure dispatch still fires and no-ops server-side, so there is no taint concern.
+- Edit mode overrides `ShouldShow` — the dock always shows while `Orbit:IsEditMode()` is true, read live on every call (no cached flag), so mid-edit `/reload` and `EditMode.Exit` both settle correctly. Icons get mouse disabled and secure attrs cleared so selection/snap overlays work.
+- `ApplyOOCFade` in `OnLoad` is mandatory: without it VE writes settings but never applies alpha to the dock (verified missing, then added).
+- `Spacing == 0` flips per-icon borders to a single merged group border + one dock backdrop (same convention as ActionBars / CooldownLayout / TrackedContainer); switching back must call `Skin:ClearIconGroupBorder`.
+- VE registry pairing: `RaidPanel` (FRAME_REGISTRY) exposes the dock; `BlizzRaidManager` (BLIZZARD_REGISTRY, `ownedBy = "Raid Panel"`, defined in `Core/Plugin/VisibilityEngine.lua`) is hidden from the VE table while this plugin owns the parked frame.
 
-## slot order
-
-| # | slot | left click | shift+left |
-|---|---|---|---|
-| 1 | Difficulty   | open menu (Normal/Heroic/Mythic, +LFR in raid) | — |
-| 2 | Ready Check  | `DoReadyCheck()` (via `PostClick`) | — |
-| 3 | Role Poll    | `InitiateRolePoll()` (via `PostClick`) | — |
-| 4-11 | Markers 1..8 | toggle target-marker N on your target (`raidtarget` secure action) | toggle world marker N (`worldmarker` secure action, index remapped via `WORLD_MARKER_ORDER`) |
-| 12 | Clear Markers | secure `macro` that `/click`s two hidden delegate buttons → `ClearRaidMarker()` (all world markers) + `RemoveRaidTargets()` (all target icons) | — |
-| 13 | Restrict Pings | open menu (None / Leader / Assist / Tanks+Healers) | — |
-
-## click handling
-
-- **marker slots** are `SecureActionButtonTemplate` buttons that use Blizzard's built-in `raidtarget` action (`type1`, left click) and `worldmarker` action (`shift-type1`, shift+left). No `action` attribute is set, so both default to `toggle` — left click toggles the target-marker on your current target, shift+left toggles world marker N on/off. The built-in `SECURE_ACTIONS.raidtarget` / `SECURE_ACTIONS.worldmarker` handlers (`Blizzard_FrameXML/SecureTemplates.lua`) call `SetRaidTarget` / `PlaceRaidMarker` / `ClearRaidMarker` natively inside the secure dispatcher.
-  - **denied world-marker feedback.** Placing a world marker is a leader option — the engine only allows it when in a group with lead/assist (the same gate as `Visibility.ShouldShow()`; world markers live in the CRF manager's leader-options container). This only matters in **Always Show** mode, where the dock can be visible while the player lacks that permission. On a shift+left click of a marker slot when `ShouldShow()` is false, `PostClick` runs `Icon.PlayDenied` instead of the normal sheen/click sound: a red `denyFlash` pulse on the icon plus `ERROR_SOUND_KIT`. The secure `worldmarker` dispatch still fires (and harmlessly no-ops server-side); the denied feedback is purely the insecure `PostClick` cosmetic layer, so no combat/taint concern. Left-click (target marker) is unaffected.
-  - **the two index sets differ.** `raidtarget` keys off the plain `marker` attribute (raid-target-icon index 1..8 = Star..Skull); `worldmarker` keys off **`shift-marker1`**, which holds `PD.WORLD_MARKER_ORDER[markerIndex]` — the permutation (`{5,6,3,2,7,1,4,8}`) mapping the displayed symbol to the matching ground marker's `PlaceRaidMarker` index. The world-marker index set is **not** the raid-target sprite order, and is **not** Blizzard's `WORLD_RAID_MARKER_ORDER` (that table feeds the CRF manager's `ReverseMarkerID`-based button layout, a different indirection); the live `PlaceRaidMarker(i) → symbol` map was read in-game (`1→square, 2→triangle, 3→diamond, 4→cross, 5→star, 6→circle, 7→moon, 8→skull`) and inverted against the sprite order.
-  - **use the suffixed attribute name.** `SecureButton_GetModifiedAttribute(self, "marker", button)` resolves via the cascade `shift-marker1` → `marker1` → `marker`; the bare `shift-marker` (no `1` suffix) is **not** in that cascade and silently falls through to the plain `marker`, so shift+click placed the raid-target index as a world marker. Write `shift-marker1` (matching the proven `shift-type1` pattern), not `shift-marker`. Left-click (no modifier) still resolves plain `marker` for `raidtarget`, so one button carries both indices.
-- **Clear Markers** must clear both all world markers (`ClearRaidMarker()`) and all target icons (`RemoveRaidTargets()`). Both are **protected** (`HasRestrictions = true` in `RaidMarkersDocumentation.lua`) — they throw `ADDON_ACTION_FORBIDDEN` if called from an insecure `PostClick`, even during a hardware event. So the slot is a secure `type1 = macro` whose `macrotext1` is `"/click OrbitRaidPanelClearWorld\n/click OrbitRaidPanelClearTargets"`. The two named delegates are hidden singleton `SecureActionButtonTemplate`s (file-local `EnsureClearDelegates`, created once out of combat): one with `type1=worldmarker action1=clear` (no `marker` → `ClearRaidMarker()` clears all world markers), one with `type1=raidtarget action1=clear-all` (`RemoveRaidTargets()`). `/click` runs each delegate's secure dispatch, keeping the protected calls on a fully secure path.
-- **action slots** (Ready Check, Role Poll) carry no `type` attribute — the secure dispatch is a no-op and `PostClick` runs the slot's `action` function (`DoReadyCheck` / `InitiateRolePoll`). Neither is protected (no `HasRestrictions`), so the insecure hardware-event call is valid; no macro or secure slash is needed.
-- **menu slots** have no `type` attribute. the secure dispatch is a no-op, then `PostClick` fires and opens the menu via `MenuUtil.CreateContextMenu`. do **not** override `OnClick` on any slot — it replaces the template's secure dispatch and breaks the marker / Clear Markers slots that share the factory.
-- **do not hardcode slash tokens (`/tm`, `/wm`, `/clearworldmarker`, `/readycheck`, ...) in a macrotext.** Slash tokens are localized — `SLASH_TARGET_MARKER1` / `SLASH_WORLD_MARKER1` / `SLASH_CLEAR_WORLD_MARKER1` come from per-locale `GlobalStrings`, and the `all` keyword that `/clearworldmarker` parses is the localized `ALL` global. A hardcoded `/tm N` or `/clearworldmarker all` macro works on an enUS client but silently does nothing where those strings are translated. Prefer the internal `SECURE_ACTIONS` types — `raidtarget` / `worldmarker` action strings and the `type` / `marker` / `action` attribute names are C identifiers identical on every locale (`Blizzard_FrameXML/SecureTemplates.lua`); the Clear Markers macro only uses `/click <frameName>` (also locale-stable, `SLASH_CLICK`), never a localized token. `PlaceRaidMarker` / `ClearRaidMarker` / `RemoveRaidTargets` all require a secure call site, which the built-in action types + `/click` delegate dispatch satisfy.
-
-## icon textures
-
-each icon is a `Button` (via `SecureActionButtonTemplate`) with the engine's built-in three-state textures plus a sheen overlay matching Portal:
-
-- background — dark-grey solid filled into the circular mask, behind the artwork
-- **NormalTexture** — base atlas / sprite cell, always visible, sized to `iconSize × sizeMult`
-- **HighlightTexture** — atlas hover variant at the same `sizeMult` as Normal (so the glyph doesn't grow/shrink on hover); or, for slots without an atlas hover variant, a yellow add-blend tint at full button size so the entire circle highlights
-- **PushedTexture** — atlas variant at the same `sizeMult` while the mouse button is held
-- **sheen** — `talents-sheen-node` atlas, ARTWORK sublevel 6, ADD blend, masked. Translation + alpha animation group plays on `PostClick`. Matches Portal's icon sweep.
-- **denyFlash** — solid red `SetColorTexture`, OVERLAY sublevel 7 (above the border), masked, alpha 0. A fade-in→fade-out alpha group (`denyAnim`) pulses it once via `Icon.PlayDenied` when a world-marker shift-click is denied (see denied world-marker feedback above).
-- border — `talents-node-choiceflyout-circle-gray` (OVERLAY)
-- click sound — `SOUNDKIT.IG_MAINMENU_OPTION` via `PlaySound` on `PostClick`; denied world-marker shift-clicks play `SOUNDKIT.IG_QUEST_FAILED` (`ERROR_SOUND_KIT`) instead
-
-all three state textures are masked by the same circular mask. `SetNormalAtlas` / `SetHighlightAtlas` / `SetPushedAtlas` resolve through the atlas system, so atlases from `Interface/HUD/UIGroupManager2x` pick the 2x variant automatically.
-
-| slot | normal | hover | pressed |
-|---|---|---|---|
-| Difficulty (Normal raid/dungeon) | `GM-icon-difficulty-normal` | `GM-icon-difficulty-normal-pressed` | `GM-icon-difficulty-normal-pressed` |
-| Difficulty (Heroic) | `GM-icon-difficulty-heroicSelected` | `GM-icon-difficulty-heroicSelected-pressed` | `GM-icon-difficulty-heroicSelected-pressed` |
-| Difficulty (Mythic) | `GM-icon-difficulty-mythic` | `GM-icon-difficulty-mythic-pressed` | `GM-icon-difficulty-mythic-pressed` |
-| Ready Check | `GM-icon-readyCheck` | `GM-icon-readyCheck-hover` | `GM-icon-readyCheck-pressed` |
-| Role Poll | `GM-icon-roles` | `GM-icon-roles-hover` | `GM-icon-roles-pressed` |
-| Markers 1-8 | `Interface\TargetingFrame\UI-RaidTargetingIcons` sprite cells 1..8 | yellow add-blend tint | sprite cell dimmed to 85% |
-| Clear Markers | `GM-raidMarker-reset` | yellow add-blend tint | `GM-raidMarker-reset` (no distinct pressed) |
-| Restrict Pings | `Ping_Marker_Icon_NonThreat` | yellow add-blend tint | — |
-
-markers use a raw texture file (no atlas) so they don't get automatic 2x. every other Orbit module that shows markers — [StatusIconMixin](../../Core/UnitDisplay/StatusIconMixin.lua), [BossFrame](../BossFrames/BossFrame.lua), [GroupFrameFactory](../GroupFrames/GroupFrameFactory.lua) — uses the same sprite sheet.
-
-`GM-raidMarker-reset` has **no** `-hover` / `-pressed` atlas variants (Blizzard's reset button is a `CRFManagerRaidIconButtonTemplate` that animates a separate `backgroundTexture` atlas, not a marker-atlas suffix — unlike the `GM-icon-*` toolbar buttons). So Clear Markers omits `atlasHover` / `atlasPressed`: `ApplyAtlasIcon` then falls back to the yellow-tint highlight and reuses `atlasNormal` for the pressed state. Setting a nonexistent `*-hover` / `*-pressed` atlas blanks the highlight (no mouseover) and the pushed texture (icon vanishes on click) — don't add them back.
-
-## visibility
-
-```
-Visible = DisplayMode == Always Show
-       OR (IsInGroup() and (UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")))    -- Visibility.ShouldShow()
-```
-
-`DisplayMode == Always Show` bypasses the in-group + lead/assist gate entirely — the slot set (markers-only vs all) is then driven by `Visibility.IsRaidLeaderTier()` instead. See the `DisplayMode` section under **settings**.
-
-re-evaluated on `GROUP_ROSTER_UPDATE`, `PARTY_LEADER_CHANGED`, `PLAYER_ENTERING_WORLD`, and after combat (`PLAYER_REGEN_ENABLED`). `GROUP_ROSTER_UPDATE` also covers raid ↔ party transitions and main-tank reassignment, both of which can flip Always-Show's slot set.
-
-**edit mode** overrides ShouldShow — the dock is always shown while `Orbit:IsEditMode()` is true, regardless of party state. Icons follow the standard Orbit edit-mode pattern (mouse disabled, secure attributes cleared) so the SelectionOverlay / anchor guides / snap previews fire unobstructed; clicking icons does nothing in edit mode. `UpdateVisibility` and `RefreshDock` both read `Orbit:IsEditMode()` directly each call — no cached sticky flag — so a `/reload` mid-edit-session and the `EditMode.Exit` transition both correctly hide the dock when nothing else demands it.
-
-## blizzard CompactRaidFrameManager
-
-When this plugin loads, `OrbitEngine.NativeFrame:Park(CompactRaidFrameManager)` hides Blizzard's raid manager UI (the panel with the difficulty / ready check / role poll / pings dropdown that this plugin replaces). When the plugin is disabled via the Orbit Plugin Manager and `/reload`d, `OnDisable` calls `Unpark` so the Blizzard panel reverts to normal behaviour.
-
-This pairing replaces the per-tier `HideBlizzardRaidPanel` checkbox that previously lived on **Group Frames** — toggling this plugin is now the single switch.
-
-The corresponding `VisibilityEngine` entries:
-- `RaidPanel` (FRAME_REGISTRY) — exposes the dock to per-frame VE settings (oocFade, opacity, hideMounted, mouseOver, showWithTarget, alphaLock).
-- `BlizzRaidManager` (BLIZZARD_REGISTRY, `ownedBy = "Raid Panel"`) — Blizzard's manager. Hidden from the VE config table while this plugin is enabled (no need to configure visibility of a frame we've parked); reappears in the table if the plugin is disabled so the user can configure the native frame directly.
-
-VE settings are *applied* to the dock by `Orbit.OOCFadeMixin:ApplyOOCFade(dock, self, 1)` called once in `OnLoad`. That mixin registers the dock in its `ManagedFrames` table, hooks `SetAlpha` so VE-managed alpha overrides direct plugin writes, installs the hover ticker for `mouseOver` reveal, and re-evaluates on `ORBIT_VISIBILITY_CHANGED`. Without this call, VE writes to its DB but no alpha is ever applied to the dock — verified missing then added.
-
-## orientation
-
-auto-detected from the dock's centre relative to the four screen edges (`LEFT/RIGHT/TOP/BOTTOM`) — same pattern as the portal dock. drag close to a different edge and `Frame:RegisterOrientationCallback` triggers a re-layout.
-
-## settings
-
-| key | type | default |
-|---|---|---|
-| `DisplayShape` | slider 1..2 (Circle / Square) | 1 (Circle) |
-| `DisplayMode`  | slider 1..3 (Always Show / Markers / All) — labelled "Marker Display" in UI | 3 (All) |
-| `IconSize`     | slider 15..30 | 24 (base size; per-slot multipliers below) |
-| `Spacing`      | slider 0..20  | 5  |
-| `Compactness`  | slider 0..100 | 0 (linear; 100 wraps the chain onto a circle) |
-
-**DisplayShape** chooses the icon shell:
-
-- `1` **Circle** — circular mask, background tinted with the global "Background" colour (`Orbit.Skin:GetBackgroundColor()`), silver atlas ring (`talents-node-choiceflyout-circle-gray`).
-- `2` **Square** — non-clipping mask (`CLAMPTOBLACKADDITIVE` wrap on WHITE so anything past the icon bounds is clipped, same as circle just square-shaped), background tinted with the global "Background" colour, silver atlas ring hidden.
-
-Both shapes share the same `Orbit.Skin:GetBackgroundColor()` source for the per-icon background. Shape toggles by re-setting the mask texture (`CIRCULAR_MASK_PATH` vs `WHITE_TEXTURE`) — one swap reshapes everything (mask is shared by background / Normal / Highlight / Pushed / sheen).
-
-**Square border modes** depend on `Spacing`:
-
-| `Spacing` | per-icon border | container border | backdrop |
-|---|---|---|---|
-| `> 0` | `Orbit.Skin:SkinBorder(icon, icon, nil, nil, true)` per icon (`GlobalSettings.IconBorderStyle` + `IconBorderColor`) | — | per-icon `icon.background` tinted with the global "Background" colour |
-| `= 0` | hidden (`_borderFrame:Hide`, `_edgeBorderOverlay:Hide`) | `Orbit.Skin:ApplyIconGroupBorder(dock, GetActiveIconBorderStyle())` — one merged border wraps the whole row | single `dock.backdrop` at BACKGROUND layer covers the whole dock; per-icon `icon.background` hidden to avoid alpha-overlap seams between adjacent icons |
-
-Same convention as ActionBars / CooldownLayout / TrackedContainer — `padding == 0` flips per-icon → group border. Switching back to `Spacing > 0` calls `Skin:ClearIconGroupBorder(dock)`, hides the dock backdrop, and reapplies per-icon borders + per-icon background.
-
-**DisplayMode** controls both visibility and which slots render (edit mode preview respects the selected mode):
-
-- `1` **Always Show** — dock is always visible regardless of group state. Slot set adapts to the player's raid role: in a raid with lead / assist / main tank → all 13 slots; otherwise (in raid without promotion, in a party, or solo) → markers-only (Markers 1..8 + Clear Markers, 9 slots). `Visibility.IsRaidLeaderTier()` resolves the role check.
-- `2` **Markers** — visibility gated by `Visibility.ShouldShow()` (in-group + lead/assist). Renders 9 slots: Markers 1..8 + Clear Markers.
-- `3` **All** — visibility gated by `Visibility.ShouldShow()`. Renders all 13 slots.
-
-reuses portal's `PLU_PORTAL_*` labels for IconSize / Spacing / Compactness because the strings are identical.
-
-per-slot **inner-image** multiplier — the Button shell (background fill, silver border, hitbox, dock spacing) is always `IconSize × IconSize`; only the inner glyph texture is scaled:
-
-| slot | sizeMult | inner glyph size at default IconSize=24 |
-|---|---|---|
-| Difficulty / Ready Check / Role Poll | 1.3 | 31.2 (overflows the ring — emphasised) |
-| Markers 1..8 | 0.8 | 19.2 (inset within the ring) |
-| Clear Markers / Restrict Pings | 1.0 (default) | 24 |
-
-implemented by overriding the default `SetAllPoints` on Normal / Highlight / Pushed textures with `SetSize` + `SetPoint("CENTER")` after `SetNormalAtlas` / `SetHighlightAtlas` / `SetPushedAtlas`.
-
-`Layout.ComputeLayout(sizes, spacing, compactness)` still accepts a per-icon size array — currently all slots pass the same `IconSize` so dock spacing is uniform.
-
-## sprite-sheet cells
-
-slot data can include `spriteSheetCell = { row, col, rows, cols }` (or `{ index, rows, cols }`) — applied via `Texture:SetSpriteSheetCell` after the atlas is set, so flipbook atlases pick a single frame. no slot currently uses this; the helper is in place for future flipbook-only atlases.
-
-## events
-
-| event | reaction |
-|---|---|
-| `GROUP_ROSTER_UPDATE`, `PARTY_LEADER_CHANGED`, `PLAYER_ENTERING_WORLD` | re-evaluate visibility |
-| `PLAYER_DIFFICULTY_CHANGED` | full refresh so the Difficulty icon swaps to the new atlas |
-| `PLAYER_REGEN_ENABLED` | flush any `pendingRefresh` queued during combat; re-evaluate visibility |
-| `PLAYER_REGEN_DISABLED` | clear edit-mode flag (no rebinds during lockdown) |
-| `EditMode.Enter` / `EditMode.Exit` | toggle drag/secure-attr clearing |
-
-## rules
-
-- secure-action bindings are written outside combat only. the plugin uses `pendingRefresh` to defer rebinds.
-- the dock itself is not protected (`CreateFrame("Frame")`); only its `SecureActionButtonTemplate` children are.
-- markers must remain interactive during combat. visibility transitions during combat are deferred.
-- user-visible strings go through `Orbit.L`. shared labels reuse `PLU_PORTAL_*`; raid-panel-specific keys use `PLU_RAIDPANEL_*`.
+## References
+- `Core/Plugin/VisibilityEngine.lua` — `BlizzRaidManager` entry; `Core/EditMode/` for edit-mode integration.
+- Blizzard source: `Blizzard_FrameXML/SecureTemplates.lua` (`SECURE_ACTIONS.raidtarget` / `worldmarker`), `RaidMarkersDocumentation.lua` (protected flags).
+- Skills: `/wow-frames` (secure templates), `/pixel` (borders).

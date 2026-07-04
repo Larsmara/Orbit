@@ -248,6 +248,23 @@ function Orbit.PluginMixin:SetSpecData(systemIndex, key, value)
     store[specID][systemIndex][key] = value
 end
 
+-- [ CHAR-SCOPED STORAGE ] ---------------------------------------------------------------------------
+-- Orbit.db.CharData[charKey][system][key] — per-character, spec-independent data (e.g. quest watch shadow state).
+function Orbit.PluginMixin:GetCharData(key)
+    local root = Orbit.db.CharData
+    local store = root and root[Orbit.CHAR_KEY]
+    local sysNode = store and store[self.system]
+    return sysNode and sysNode[key]
+end
+
+function Orbit.PluginMixin:SetCharData(key, value)
+    local root = Orbit.db.CharData
+    if not root then Orbit.db.CharData = {}; root = Orbit.db.CharData end
+    if not root[Orbit.CHAR_KEY] then root[Orbit.CHAR_KEY] = {} end
+    if not root[Orbit.CHAR_KEY][self.system] then root[Orbit.CHAR_KEY][self.system] = {} end
+    root[Orbit.CHAR_KEY][self.system][key] = value
+end
+
 -- [ VISIBILITY ]-------------------------------------------------------------------------------------
 local VISIBILITY_EVENTS = { "PET_BATTLE_OPENING_START", "PET_BATTLE_CLOSE", "PLAYER_MOUNT_DISPLAY_CHANGED", "ZONE_CHANGED_NEW_AREA", "ORBIT_MOUNTED_VISIBILITY_CHANGED" }
 local VISIBILITY_UNIT_EVENTS = { "UNIT_ENTERED_VEHICLE", "UNIT_EXITED_VEHICLE" }

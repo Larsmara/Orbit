@@ -1,33 +1,30 @@
-# boss frames
+# BossFrames
 
-unit frames for boss encounters (boss1-boss5).
+## Description
+Unit frames for boss encounters (boss1–boss5) with health, power, cast bars, auras, and raid markers.
 
-## purpose
+## Purpose
+Boss display during encounters, built on the shared unit display stack (`UnitButton`, `UnitFrameMixin`, `AuraMixin`, `StatusIconMixin` from Core/UnitDisplay) so it stays a thin composition rather than a parallel unit-frame implementation.
 
-displays boss health bars, cast bars, and auras during encounters. uses the shared unit display mixins from core.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| BossFrame.lua | main plugin. frame creation, event handling, settings application, aura display. |
-| BossFrameCastBar.lua | boss cast bar creation and update logic. |
-| BossFrameHelpers.lua | aura position helper (`AnchorToPosition`) shared with the canvas-mode aura preview. |
-| BossFramePreview.lua | canvas mode preview for boss frames. |
+| BossFrame.lua | plugin (`Orbit_BossFrames`); frame creation, events, settings, aura containers |
+| BossFrameCastBar.lua | per-frame cast bar creation and update |
+| BossFrameHelpers.lua | `AnchorToPosition` helper shared with the canvas aura preview |
+| BossFramePreview.lua | canvas mode previews |
 
-## how it works
+`OnLoad` eagerly creates all `MAX_BOSS_FRAMES = 5` frames via `OrbitEngine.UnitButton:Create` (secure targeting). Per-unit data arrives through `RegisterUnitEvent` — `UNIT_HEALTH`/`UNIT_MAXHEALTH` plus absorb/heal-prediction events feed the health StatusBar, `UNIT_POWER_*`/`UNIT_DISPLAYPOWER` the power bar, `UNIT_AURA` the buff/debuff containers via `UpdateAuraContainer`. A separate event frame listens for `INSTANCE_ENCOUNTER_ENGAGE_UNIT`, `PLAYER_REGEN_DISABLED/ENABLED`, and `UNIT_TARGETABLE_CHANGED` to drive how many frames show (all 5 in Edit Mode/preview). Cast bars register `UNIT_SPELLCAST_*` per unit. Aura containers are canvas-draggable via `ComponentDrag` with `MakeAuraPositionCallback`; all settings flow through the standard `defaults` block and `ApplySettings`.
 
-5 boss frames (boss1-boss5) are created eagerly in `OnLoad` via `for i = 1, MAX_BOSS_FRAMES` (`MAX_BOSS_FRAMES = 5`, defined at the top of `BossFrame.lua`). they use `UnitButton` from core/unitdisplay for secure targeting.
+## Gotchas
+- `BossFrameCastBar.lua` predates the consolidation rule and reimplements the cast-bar update loop instead of using `CastBarMixin`. This is tracked technical debt: new cast bars MUST use `CastBarMixin`; do not extend the reimplementation with features that belong in the mixin.
+- The boss cast bar uses the unified border pattern (one border wrapping icon + bar via `UpdateBarInsets`) matching target/focus in `Skin.CastBar` — keep it in sync with that style.
+- Frames are allocated eagerly, never on demand; the aura preview must share `BossFrameHelpers:AnchorToPosition` with the live path for canvas parity.
 
-## adding a new boss frame feature
+## Secrets
+Health and power values flow straight into StatusBar sinks (`SetMinMaxValues`/`SetValue`) with no Lua arithmetic. Cast timing uses duration objects passed to `SetTimerDuration`, and the timer text is driven by a per-cast `C_CurveUtil` curve mapping remaining% → remaining seconds so the `OnUpdate` never does arithmetic on secret `startMs`/`endMs`. `UnitCastingDuration`/`UnitChannelDuration` are called through `pcall` as throwing C API boundaries.
 
-1. add the behavior to `BossFrame.lua` in `ApplySettings`
-2. if it's a shared unit frame behavior, add it to core/unitdisplay instead
-3. add schema entries in `AddSettings`
-
-## rules
-
-- boss frames share the aura `AnchorToPosition` helper via `BossFrameHelpers` for canvas-mode preview parity
-- new cast bar features must use `CastBarMixin`. **known divergence:** `BossFrameCastBar.lua` predates the consolidation rule and currently reimplements the cast-bar update loop. Consolidating into `CastBarMixin` is tracked technical debt — until then, treat the rule as "new cast bars MUST use CastBarMixin; existing reimplementations are technical debt."
-- boss cast bar uses the unified border pattern (single border wrapping icon + bar via `UpdateBarInsets`) matching the target/focus style from `Skin.CastBar`
-- boss frame count is 5 (`MAX_BOSS_FRAMES = 5`); frames are allocated eagerly, not on demand
+## References
+- `Core/UnitDisplay/` (UnitButton, UnitFrameMixin, CastBarMixin, aura mixins) and its README.
+- `Plugins/UnitFrames/README.md` for the target/focus cast bar style this mirrors.
+- Skills: `/wow-secrets` (curves, duration objects), `/wow-frames`, `/wow-filters` (aura display).

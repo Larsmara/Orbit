@@ -32,7 +32,6 @@ local ONCD_CURVE = C_CurveUtil and C_CurveUtil.CreateCurve and (function()
 end)()
 
 local GC = OrbitEngine.GlowController
-local Parser = Orbit.TooltipParser
 
 -- [ MODULE ] ----------------------------------------------------------------------------------------
 Orbit.TrackedIconItem = {}
@@ -43,8 +42,7 @@ local IconItem = Orbit.TrackedIconItem
 function IconItem:ApplyFont(plugin, icon)
     local font = plugin:GetGlobalFont() or STANDARD_TEXT_FONT
     local outline = Orbit.Skin and Orbit.Skin:GetFontOutline() or "OUTLINE"
-    icon.ChargeText:SetFont(font, FONT_SIZE_DEFAULT, outline)
-    Orbit.Skin:ApplyFontShadow(icon.ChargeText)
+    Orbit.Skin:SetFontWithShadow(icon.ChargeText, font, FONT_SIZE_DEFAULT, outline)
     self:StyleCooldownText(icon.Cooldown, font, outline)
     self:StyleCooldownText(icon.ActiveCooldown, font, outline)
 end
@@ -65,9 +63,8 @@ function IconItem:StyleCooldownText(cd, font, outline)
         end
     end
     if not fs then return end
-    fs:SetFont(font, FONT_SIZE_DEFAULT, outline)
+    Orbit.Skin:SetFontWithShadow(fs, font, FONT_SIZE_DEFAULT, outline)
     fs:SetDrawLayer("OVERLAY", 7)
-    if Orbit.Skin and Orbit.Skin.ApplyFontShadow then Orbit.Skin:ApplyFontShadow(fs) end
 end
 
 -- [ SWIPE COLOR APPLIER ] ---------------------------------------------------------------------------
@@ -155,8 +152,9 @@ function IconItem:Build(container, removeCallback)
     icon:EnableMouse(true)
     icon:RegisterForDrag("LeftButton")
     icon:SetScript("OnMouseDown", function(self, button)
-        if button == "RightButton" and IsShiftKeyDown() and not InCombatLockdown() then
-            if removeCallback then removeCallback(self) end
+        if button == "RightButton" and IsShiftKeyDown() then
+            if self._openGlowMenu then self._openGlowMenu(self)
+            elseif removeCallback and not InCombatLockdown() then removeCallback(self) end
         end
     end)
 
@@ -168,7 +166,11 @@ end
 function IconItem:Update(icon)
     if not icon.trackedId then icon:Hide(); icon._visShown = nil; icon._lastState = "ready"; return "ready" end
 
+    local prevState = icon._lastState
     local texture, state
+
+    -- DrawEdge is a charge-recharge-only ring; reset here so a pooled icon reused from a charge spell can't leak it.
+    if icon.Cooldown.SetDrawEdge then icon.Cooldown:SetDrawEdge(false) end
 
     if icon.trackedType == "spell" then
         texture, state = self:UpdateSpell(icon)
@@ -193,19 +195,20 @@ function IconItem:Update(icon)
     state = state or "ready"
     icon._lastState = state
     self:ApplyVisibilityAlpha(icon, state)
+    if prevState and prevState ~= "ready" and state == "ready" then Orbit.IconCastState:Flash(icon) end
     return state
 end
 
 -- [ SPELL UPDATE ] ----------------------------------------------------------------------------------
 function IconItem:UpdateSpell(icon)
     if not IsSpellKnown(icon.trackedId) and not IsPlayerSpell(icon.trackedId) then
-        local activeId = FindSpellOverrideByID(icon.trackedId)
+        local activeId = Orbit.CooldownData:GetActiveSpellID(icon.trackedId)
         if activeId == icon.trackedId or (not IsSpellKnown(activeId) and not IsPlayerSpell(activeId)) then
             return nil, nil
         end
     end
 
-    local activeId = FindSpellOverrideByID(icon.trackedId) or icon.trackedId
+    local activeId = Orbit.CooldownData:GetActiveSpellID(icon.trackedId)
     local texture = C_Spell.GetSpellTexture(activeId)
     if not texture then return nil, nil end
     icon.Icon:SetTexture(texture)
@@ -294,6 +297,8 @@ function IconItem:UpdateChargeSpell(icon, activeId, chargeInfo, onGCD)
     local chargeDurObj = C_Spell.GetSpellChargeDuration and C_Spell.GetSpellChargeDuration(activeId)
     if chargeDurObj then
         icon.Cooldown:SetCooldownFromDurationObject(chargeDurObj, true)
+        -- Bright recharge ring like CooldownViewer's secondary cooldown; zero-span at max charges clears the swipe so nothing draws.
+        if icon.Cooldown.SetDrawEdge then icon.Cooldown:SetDrawEdge(true) end
     else
         icon.Cooldown:Clear()
         icon._charges = icon._maxCharges

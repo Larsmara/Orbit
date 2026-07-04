@@ -1,39 +1,40 @@
-# shared
+# Shared
 
-project-wide constants, media registrations, and shared glow infrastructure. loaded before all other core modules.
+## Description
+Project-wide constants, media registrations, and shared cross-plugin services: the glow stack, cooldown metadata, drag-drop resolution, the private tooltip, and secret-value helpers. Loads before all other Core modules.
 
-## purpose
+## Purpose
+Single source of truth for constants, plus the home of behavior shared by multiple plugins that belongs to no one domain (glows, cooldown data, drop zones). Depends only on libs.
 
-provides the single source of truth for numeric constants, layer indices, color presets, registered media assets (fonts/textures via libsharedmedia), and the unified glow controller that all plugins use for rendering and managing glows.
-
-## files
-
-| file | responsibility |
+## Implementation
+| File | Role |
 |---|---|
-| Constants.lua | all project constants: colors, layer indices (`C.Levels`), border style definitions (`C.BorderStyle`), cooldown system indices, padding values, glow configurations, aura skin presets. |
-| Media.lua | libsharedmedia registrations for custom fonts and textures. |
-| Tooltip.lua | `Orbit.Tooltip` — a private `GameTooltipTemplate` frame (`OrbitTooltip`). Every Orbit-owned hover tooltip uses it instead of the global `GameTooltip`. Owning the global tooltip from addon code taints it, which breaks Blizzard's own secret-handling unit-tooltip pipeline (`SetWorldCursor`) in WoW 12.0+. Consumers alias it: `local GameTooltip = Orbit.Tooltip`. |
-| WhitelistedSpells.lua | exposes raw category tables (`CLASS_RESOURCES`, `HEALER_AURAS`, `COMBAT_RES`, `RAID_BUFFS`, etc.) consumed directly by `UnitDisplay/GroupAuraFilters.lua`. no `IsX` query API. |
-| PlayerDummies.lua | unit-frame dummy data for config-panel previews (name, class, health, power). |
-| SecretValueUtils.lua | helpers for WoW 12.0+ secret value detection. |
-| TooltipParser.lua | tooltip scanning for active duration and cooldown duration extraction. |
-| CooldownUtils.lua | icon dimension calculation, skin settings builder. |
-| CooldownDragDrop.lua | `Orbit.CooldownDragDrop` — pure cursor → cooldown-ability resolver. cursor unwrap, `HasCooldown`/`IsDraggingCooldownAbility` (secret-value guarded), equipment slot lookup, cursor texture resolve, and saved-data entry builders for `TrackedItems` / `InjectedItems` / `TrackedBarSpell`. no plugin references — consumed by `CooldownManager/ViewerInjection.lua` and the (future) redesigned Tracked plugin. |
-| GlowUtils.lua | pure data utility for constructing LibOrbitGlow option tables from DB settings. no frame manipulation. |
-| GlowController.lua | single authoritative owner for all glow operations. all consumers call this module — no other file touches LibOrbitGlow directly. handles native blizzard overlay suppression, pandemic wrapper frames, proc glow lifecycle, and centralized state tracking via `frame._orbitGlow`. |
-| DropZoneGlow.lua | `Orbit.DropZoneGlow:Attach(zoneFrame, r, g, b, outset)` — wraps a drop-zone frame with a 9-slice atlas glow. visibility is driven by a shared 0.1s ticker that gates on `IsDraggingCooldownAbility()` AND the zone being visible, so Tracked drop zones shown for non-drag reasons (edit mode, settings panel) do not light the glow. glow is at `Background` strata / frame level 0 to render beneath the zone's own textures. outset offsets are pixel-snapped via `Pixel:Multiple`. `outset` accepts a number or a function — CDM uses a function so the glow picks up live `GlobalSettings.BorderSize` on every re-show. shared by CooldownManager viewer injection (green), TrackedContainer drop zones (green, per neighbor-expansion cell), and TrackedBar drop hint (golden yellow). |
+| Constants.lua | all project constants: colors, `C.Levels`, `C.BorderStyle`, cooldown indices, glow configs, aura skin presets |
+| Media.lua | LibSharedMedia font/texture registrations |
+| Tooltip.lua | `Orbit.Tooltip` — private `GameTooltipTemplate` frame (`OrbitTooltip`) all Orbit hover tooltips use |
+| WhitelistedSpells.lua | raw category tables (`CLASS_RESOURCES`, `HEALER_AURAS`, `RAID_BUFFS`, `COMBAT_RES`) read by `UnitDisplay/GroupAuraFilters.lua`; no query API |
+| PlayerDummies.lua | dummy unit data for config-panel previews |
+| SecretValueUtils.lua | `SafeUnitPowerPercent` (pcall'd C sink), `NumericOrNil` (issecretvalue gate) |
+| CooldownData.lua / CooldownLearn.lua / TooltipParser.lua | cooldown metadata + duration learning (flow below) |
+| CooldownUtils.lua / CooldownDragDrop.lua | icon dimension math; pure cursor → cooldown-ability resolver and saved-entry builders (`TrackedItems`/`InjectedItems`/`TrackedBarSpell`) |
+| GlowUtils.lua / GlowController.lua / SpellGlows.lua / DropZoneGlow.lua | glow stack (flow below) |
+| IconCastState.lua | range/usable/ready tinting + OOR shadow + ready flash, refcounted `C_Spell.EnableSpellRangeCheck` |
 
-## adding a new constant
+Glow flow: `GlowUtils` builds LibOrbitGlow option tables from DB settings → `GlowController` is the single owner of all glow rendering (state on `frame._orbitGlow`; native Blizzard overlay suppression; pandemic wrapper frames). `SpellGlows` layers the per-icon conditional glow menu (proc/pandemic/active + sounds) and the shared `SPELL_ACTIVATION_OVERLAY` proc driver; it owns no storage — every surface passes get/set closures to `OpenMenu`. `DropZoneGlow:Attach(zoneFrame, r, g, b, outset)` wraps drop zones; a shared 0.1s ticker gates visibility on `CooldownDragDrop:IsDraggingCooldownAbility()` AND the zone being visible.
 
-1. add it to the appropriate section in `Constants.lua`
-2. reference it via `Orbit.Constants.YourSection.YourConstant`
-3. never duplicate the value inline in another file
+Cooldown metadata flow: `CooldownData` keeps a spellID → cooldownInfo reverse lookup over C_CooldownViewer, rebuilt lazily on spec/talent events. `ResolveActiveDuration` walks curated overrides → tooltip parse (`TooltipParser`) → aura-learn watch (`CooldownLearn` — one self-disabling UNIT_AURA listener; `Request` one-shot multi-subscriber, `RequestOnce` keyed dedupe shared by Tracked + ViewerInjection).
 
-## rules
+## Gotchas
+- Constants.lua and Media.lua hold declarations only — no logic, no references to other modules. Extract magic numbers here or to the consuming file's top-level constants; never duplicate a value inline.
+- All glow rendering goes through `GlowController`; no consumer calls LibOrbitGlow (`LCG.Show`/`Hide`) directly.
+- `SpellGlows` surfaces must call `UnregisterProc` when a pooled icon is released or changes type, or the next occupant inherits proc state.
+- `IconCastState` release paths must `Untrack`, or the next occupant inherits tint state and range-check streams leak (the `EnableSpellRangeCheck` refcount never drops).
+- Never own the global `GameTooltip` from addon code — it taints Blizzard's secret-handling unit-tooltip pipeline (`SetWorldCursor`) in 12.0+. Alias `local GameTooltip = Orbit.Tooltip`.
+- `CooldownData:GetBaseCooldownSeconds` returns nil for base-cd-0/secret spells so callers keep last-known values instead of zeroing.
+- `DropZoneGlow` renders at Background strata / frame level 0 beneath the zone's own textures; `outset` accepts a number or a function (CDM passes a function to track live `GlobalSettings.BorderSize`).
 
-- no executable logic in Constants.lua or Media.lua. only declarations.
-- no references to any other module (no `require`, no `Orbit.Engine`) in Constants.lua or Media.lua
-- constants must be grouped by domain (colors, layers, cooldown indices, etc.)
-- magic numbers found anywhere else in the codebase must be extracted here or to the consuming file's top-level constants
-- all glow rendering must go through `GlowController`. never call `LCG.Show`/`LCG.Hide` directly from consumer code
+## Secrets
+`SecretValueUtils.NumericOrNil` gates with `issecretvalue` before any Lua op — `or 0` does not catch a secret (secrets are truthy) and `string.format` on one throws. `SafeUnitPowerPercent` pcalls `UnitPowerPercent` with the `CurveConstants.ScaleTo100` curve — a permitted throwing-C-API boundary. `CooldownDragDrop` issecretvalue-guards its `GetSpellBaseCooldown` / `C_Spell.GetSpellCharges` comparisons so drop acceptance never throws in combat; the tooltip parse is the in-combat final word for spells those APIs won't report.
 
+## References
+/wow-secrets, /unsecreted, /ki-abilities (CooldownManager/Tracked consumers), `Core/UnitDisplay/README.md` (aura-side consumers), `Core/Libs/` (LibOrbitGlow).
