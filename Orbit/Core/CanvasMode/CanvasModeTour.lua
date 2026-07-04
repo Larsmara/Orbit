@@ -4,6 +4,7 @@ local _, Orbit = ...
 local OrbitEngine = Orbit.Engine
 local CanvasMode = OrbitEngine.CanvasMode
 local Dialog = CanvasMode.Dialog
+local GameTooltip = Orbit.Tooltip
 
 -- [ CONSTANTS ] -------------------------------------------------------------------------------------
 local BUTTON_SIZE = 36

@@ -126,11 +126,14 @@ function Plugin:OnLoad()
 
     -- Native ScrollFrame viewport (the proven Kaliel's-Tracker pattern): it clips and offsets its scroll child at the engine level, replacing the hand-rolled clip frame + SetPoint-offset scroll. It only clips its own child, so the Edit Mode selection/resize handle (sibling children of self.frame) stay visible. Inset/size applied in ApplySettings.
     self.scrollFrame = CreateFrame("ScrollFrame", "OrbitObjectivesScroll", self.frame)
-    self.scrollFrame:SetClipsChildren(true)
+    -- Clip only while content overflows (toggled in OnScrollRangeChanged). When everything fits, clipping is off so scenario widget button rows and their popouts (Lorewalking HelpTip bubbles anchored past the box edge) render in full instead of being cut off at the box edge.
+    self.scrollFrame:SetClipsChildren(false)
     self.scrollFrame:EnableMouseWheel(true)
     self.scrollFrame:SetScript("OnMouseWheel", function(_, delta) self:OnScroll(delta) end)
-    -- Content shrinking (quest dropped / collapse) can leave the scroll past the new end; clamp back into range.
     self.scrollFrame:SetScript("OnScrollRangeChanged", function(sf, _, yRange)
+        -- Clip only when scrolling is actually needed; off when content fits so widget popouts aren't cut off.
+        sf:SetClipsChildren(yRange > 0)
+        -- Content shrinking (quest dropped / collapse) can leave the scroll past the new end; clamp back into range.
         if sf:GetVerticalScroll() > yRange then sf:SetVerticalScroll(math.max(0, yRange)) end
     end)
 
@@ -251,11 +254,12 @@ function Plugin:CaptureTracker()
                 h = 0
             end
             h = math.max(h, C.MIN_TRACKER_HEIGHT)
-            -- Reserve a sliver for the trailing header separator: it hangs just below the last header, so on a collapsed last section it lands in the bottom inset where the ScrollFrame would clip it. Only the Orbit skin draws separators, so Blizzard style reserves nothing.
+            -- Reserve a sliver for the trailing header separator (it hangs just below the last header, landing in the bottom inset on a collapsed last section). Keep it in the box/viewport height ONLY, not the scroll child: the scroll range is driven by scrollChild vs viewport, so baking the sliver into scrollChild inflated the range past true content — phantom scroll + empty space below, which also kept SetClipsChildren(true) on and cut off the left-extending scenario widget flyout. Box carries the sliver so the separator still has room; scrollChild tracks real content so range collapses to 0 whenever content fits. Only the Orbit skin draws separators, so Blizzard style reserves nothing.
+            local boxH = h
             if self:IsOrbitStyle() and self:GetSetting(SYSTEM_ID, "HeaderSeparators") ~= false then
-                h = h + OrbitEngine.Pixel:Multiple(C.HEADER_SEPARATOR_HEIGHT + 1, container:GetEffectiveScale())
+                boxH = h + OrbitEngine.Pixel:Multiple(C.HEADER_SEPARATOR_HEIGHT + 1, container:GetEffectiveScale())
             end
-            container:SetHeight(h)
+            container:SetHeight(boxH)
             if self.scrollChild then self.scrollChild:SetHeight(h) end
 
             self:RefreshEmptyState()
@@ -612,24 +616,32 @@ function Plugin:InstallCombatCollapseHooks()
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:SetScript("OnEvent", function(_, event)
-        if not ObjectiveTrackerFrame or not ObjectiveTrackerFrame.SetCollapsed then return end
-
         if event == "PLAYER_REGEN_DISABLED" then
             if not self:GetSetting(SYSTEM_ID, "AutoCollapseCombat") then return end
-            self._preCombatCollapsed = ObjectiveTrackerFrame.isCollapsed
-            if not ObjectiveTrackerFrame.isCollapsed then
-                self._combatCollapsing = true
-                ObjectiveTrackerFrame:SetCollapsed(true)
-                self._combatCollapsing = nil
+            -- Collapse only quest-type modules (Quests, World Quests, Achievements) — scenarios/events/bonus objectives stay visible in combat. Remember which we collapsed so we restore only those.
+            self._combatCollapsed = {}
+            for _, name in ipairs(C.COMBAT_COLLAPSE_MODULES) do
+                local m = _G[name]
+                if m and m.SetCollapsed and not m.isCollapsed then
+                    self._combatCollapsing = true
+                    m:SetCollapsed(true)
+                    self._combatCollapsing = nil
+                    self._combatCollapsed[#self._combatCollapsed + 1] = name
+                end
             end
         elseif event == "PLAYER_REGEN_ENABLED" then
-            -- Always undo the combat auto-collapse (even if the setting was toggled off mid-combat) so it can never strand collapsed; _combatCollapsing keeps this transient toggle out of the saved layout.
-            if self._preCombatCollapsed == false then
-                self._combatCollapsing = true
-                ObjectiveTrackerFrame:SetCollapsed(false)
-                self._combatCollapsing = nil
+            -- Always undo the combat auto-collapse (even if the setting was toggled off mid-combat); _combatCollapsing keeps this transient toggle out of the saved layout.
+            if self._combatCollapsed then
+                for _, name in ipairs(self._combatCollapsed) do
+                    local m = _G[name]
+                    if m and m.SetCollapsed then
+                        self._combatCollapsing = true
+                        m:SetCollapsed(false)
+                        self._combatCollapsing = nil
+                    end
+                end
+                self._combatCollapsed = nil
             end
-            self._preCombatCollapsed = nil
         end
     end)
 

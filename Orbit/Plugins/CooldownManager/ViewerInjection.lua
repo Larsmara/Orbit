@@ -565,7 +565,8 @@ end
 function Injection:GetOrCreatePhantom(sysIdx)
     if self._phantom then return self._phantom end
     local entry = Plugin.viewerMap[sysIdx]
-    local parent = entry and entry.viewer or UIParent
+    -- Parent to the Orbit anchor, never entry.viewer: the viewer is Blizzard's secure InCombatProtect frame and a child taints its secret item state (README gotcha). SetPoint against native icons works cross-parent.
+    local parent = entry and entry.anchor or UIParent
     local icon = CreateInjectedIcon(parent, sysIdx)
     icon.isPhantom = true
     icon:SetAlpha(PREVIEW_ALPHA)
@@ -715,7 +716,7 @@ function Injection:UpdateDropZoneHighlight(anchor)
     phantom.systemIndex = sysIdx
     
     local entry = Plugin.viewerMap[sysIdx]
-    local parent = entry and entry.viewer or UIParent
+    local parent = entry and entry.anchor or UIParent
     phantom:SetParent(parent)
     
     local frames = Plugin.injectedFrames[sysIdx] or {}

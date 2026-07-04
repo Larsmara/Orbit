@@ -7,6 +7,7 @@ local C = CanvasMode.Constants
 local L = Orbit.L
 local Pixel = OrbitEngine.Pixel
 local Levels = Orbit.Constants.Levels
+local GameTooltip = Orbit.Tooltip
 
 -- [ FILTER CONSTANTS ] ------------------------------------------------------------------------------
 local FILTER_TABS = { "All", "Text", "Icons", "Auras" }

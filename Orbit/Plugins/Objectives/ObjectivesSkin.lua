@@ -61,19 +61,6 @@ local function GetNormalQuestColor()    return _cachedNormalColor    end
 local function GetCompletedQuestColor() return _cachedCompletedColor end
 local function GetFocusQuestColor()     return _cachedFocusColor     end
 
-local function IsUnderObjectivesTracker(frame)
-    local p = frame
-    while p do
-        -- The Setup hook fires for every status-bar widget, incl. nameplate widgets in Blizzard's forbidden hierarchy; those aren't ours and throw "bad self" on GetParent, so stop the walk there.
-        if p.IsForbidden and p:IsForbidden() then return false end
-        if p == ObjectiveTrackerFrame or (ObjectiveTrackerManager and (ObjectiveTrackerManager.containers[p] or ObjectiveTrackerManager.moduleToContainerMap[p])) then
-            return true
-        end
-        p = p:GetParent()
-    end
-    return false
-end
-
 -- [ SKIN: FONT ]-------------------------------------------------------------------------------------
 local function ApplyFont(fontString, size)
     if not fontString or not fontString.SetFont then return end
@@ -763,86 +750,6 @@ local function SkinTimerBar(tracker, key)
     bar._orbitSkinned = true
 end
 
--- [ SKIN: UI WIDGET STATUS BAR ]---------------------------------------------------------------------
-local function SkinWidgetStatusBar(self)
-    if not _enabled then return end
-    if not IsUnderObjectivesTracker(self) then return end
-
-    local bar = self.Bar
-    if not bar then return end
-
-    if self.Label then ApplyFont(self.Label) end
-
-    -- ONE-TIME SETUP: Textures and backgrounds never reset
-    if not bar._orbitSkinned then
-        bar:SetHeight(C.PROGRESS_BAR_HEIGHT)
-
-        if bar.BGLeft then bar.BGLeft:SetAlpha(0) end
-        if bar.BGRight then bar.BGRight:SetAlpha(0) end
-        if bar.BGCenter then bar.BGCenter:SetAlpha(0) end
-        if bar.BorderLeft then bar.BorderLeft:SetAlpha(0) end
-        if bar.BorderRight then bar.BorderRight:SetAlpha(0) end
-        if bar.BorderCenter then bar.BorderCenter:SetAlpha(0) end
-        if self.BG then self.BG:SetAlpha(0) end -- Sometimes widgets have their own BG
-        if self.LabelBG then self.LabelBG:SetAlpha(0) end
-        if self.LabelBGDivider then self.LabelBGDivider:SetAlpha(0) end
-
-        ApplyOrbitBarStyle(bar)
-        bar._orbitSkinned = true
-    end
-
-    if self.LabelIcon then
-        self.LabelIcon:SetTexture(nil)
-        self.LabelIcon:SetAlpha(0)
-    end
-    if self.Icon then
-        self.Icon:SetTexture(nil)
-        self.Icon:SetAlpha(0)
-    end
-    if self.Label then
-        self.Label:ClearAllPoints()
-        if bar then
-            self.Label:SetPoint("CENTER", bar, "CENTER", 0, 0)
-        end
-    end
-end
-
--- [ SKIN: UI WIDGET ICON AND TEXT ]------------------------------------------------------------------
-local function SkinWidgetIconAndText(self)
-    if not _enabled then return end
-    if not IsUnderObjectivesTracker(self) then return end
-
-    if self.Icon then
-        self.Icon:SetTexture(nil)
-        self.Icon:SetAlpha(0)
-    end
-    if self.Text then
-        ApplyFont(self.Text)
-    end
-    if self.DynamicIconTexture then
-        self.DynamicIconTexture:SetTexture(nil)
-        self.DynamicIconTexture:SetAlpha(0)
-    end
-end
-
-local function SkinWidgetStateIcon(self)
-    if not _enabled then return end
-    if not IsUnderObjectivesTracker(self) then return end
-    if self.Icon then
-        self.Icon:SetTexture(nil)
-        self.Icon:SetAlpha(0)
-    end
-end
-
-local function SkinWidgetIconTextAndBackground(self)
-    if not _enabled then return end
-    if not IsUnderObjectivesTracker(self) then return end
-    if self.Icon then self.Icon:SetAlpha(0) end
-    if self.Glow then self.Glow:SetAlpha(0) end
-    if self.Text then ApplyFont(self.Text) end
-    if self.Background then self.Background:SetAlpha(0) end
-end
-
 -- [ SUPER TRACKING ]---------------------------------------------------------------------------------
 -- Track which quest is super-tracked so GetPOIColor can apply the focus colour.
 local _superTrackFrame = CreateFrame("Frame")
@@ -857,7 +764,7 @@ end)
 function Plugin:InstallSkinHooks()
     if self._hooksInstalled then return end
 
-    -- Blizzard style keeps the native header chrome (background, minimize button, collapse animation) — skip the cosmetic passes. The AddBlock/GetProgressBar/widget hooks below still install but self-gate on the _enabled flag (SetSkinEnabled), so they no-op until Orbit style turns them on. Reload-gated, so this re-evaluates fresh each session.
+    -- Blizzard style keeps the native header chrome (background, minimize button, collapse animation) — skip the cosmetic passes. The AddBlock/GetProgressBar/GetTimerBar hooks below still install but self-gate on the _enabled flag (SetSkinEnabled), so they no-op until Orbit style turns them on. Reload-gated, so this re-evaluates fresh each session.
     local orbitStyle = self:IsOrbitStyle()
 
     -- Skin the main container header (Orbit style only)
@@ -913,21 +820,6 @@ function Plugin:InstallSkinHooks()
     if ObjectiveTrackerQuestPOIBlockMixin and ObjectiveTrackerQuestPOIBlockMixin.AddPOIButton then
         hooksecurefunc(ObjectiveTrackerQuestPOIBlockMixin, "AddPOIButton", SkinPOIButton)
     end
-
-    -- Hook UI widget status bars (globally, then filter to Objectives inside the function)
-    if UIWidgetTemplateStatusBarMixin and UIWidgetTemplateStatusBarMixin.Setup then
-        hooksecurefunc(UIWidgetTemplateStatusBarMixin, "Setup", SkinWidgetStatusBar)
-    end
-    if UIWidgetTemplateIconAndTextMixin and UIWidgetTemplateIconAndTextMixin.Setup then
-        hooksecurefunc(UIWidgetTemplateIconAndTextMixin, "Setup", SkinWidgetIconAndText)
-    end
-    if UIWidgetBaseStateIconTemplateMixin and UIWidgetBaseStateIconTemplateMixin.Setup then
-        hooksecurefunc(UIWidgetBaseStateIconTemplateMixin, "Setup", SkinWidgetStateIcon)
-    end
-    if UIWidgetTemplateIconTextAndBackgroundMixin and UIWidgetTemplateIconTextAndBackgroundMixin.Setup then
-        hooksecurefunc(UIWidgetTemplateIconTextAndBackgroundMixin, "Setup", SkinWidgetIconTextAndBackground)
-    end
-
 end
 
 -- [ FIT WIDTHS ]-------------------------------------------------------------------------------------

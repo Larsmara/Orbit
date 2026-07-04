@@ -1,15 +1,17 @@
 -- [ MOVE MORE ]--------------------------------------------------------------------------------------
 local _, Orbit = ...
 local L = Orbit.L
+local GameTooltip = Orbit.Tooltip
 
 -- [ CONSTANTS ]--------------------------------------------------------------------------------------
+-- MapCanvas panels (WorldMapFrame, FlightMapFrame) are deliberately excluded: making a secure map canvas movable writes SetMovable/SetPoint to it from insecure code, which taints the frame and blocks the protected SetPropagateMouseClicks its POI pins call — a well-known unfixable taint class. Retail already offers a native movable world map.
 local FRAME_NAMES = {
     "CharacterFrame", "PlayerSpellsFrame", "ProfessionsBookFrame", "ProfessionsFrame",
     "FriendsFrame", "CommunitiesFrame", "CommunitiesGuildLogFrame",
     "CommunitiesGuildTextEditFrame", "CommunitiesGuildNewsFiltersFrame",
     "ClubFinderGuildRecruitmentDialog", "RaidBrowserFrame",
     "CollectionsJournal", "EncounterJournal", "AchievementFrame",
-    "WorldMapFrame", "QuestFrame", "QuestLogPopupDetailFrame",
+    "QuestFrame", "QuestLogPopupDetailFrame",
     "PVEFrame", "LFGListApplicationDialog",
     "GossipFrame", "MerchantFrame", "TradeFrame",
     "GuildRegistrarFrame", "PetitionFrame", "ItemTextFrame", "TabardFrame",
@@ -30,7 +32,7 @@ local FRAME_NAMES = {
     "MajorFactionRenownFrame", "PerksProgramFrame", "GenericTraitFrame",
     "VoidStorageFrame", "GuildBankFrame",
     "WarbandSceneEditor",
-    "FlightMapFrame", "TaxiFrame",
+    "TaxiFrame",
     "HelpFrame", "ScrappingMachineFrame", "ItemSocketingFrame", "MacroPopupFrame",
     "ReadyCheckFrame", "RolePollPopup",
     "BarberShopFrame", "SoulbindViewer", "RuneforgeFrame",
@@ -40,7 +42,6 @@ local FRAME_NAMES_HASH = {}
 for _, name in ipairs(FRAME_NAMES) do FRAME_NAMES_HASH[name] = true end
 
 local NO_SCALE = {
-    WorldMapFrame = true, FlightMapFrame = true,
     GarrisonLandingPage = true, ExpansionLandingPage = true,
     MajorFactionRenownFrame = true, PerksProgramFrame = true,
     GenericTraitFrame = true, WeeklyRewardsFrame = true,

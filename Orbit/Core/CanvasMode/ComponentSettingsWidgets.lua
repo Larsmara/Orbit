@@ -6,6 +6,7 @@ local OrbitEngine = Orbit.Engine
 local Layout = OrbitEngine.Layout
 local CanvasMode = OrbitEngine.CanvasMode
 local Constants = Orbit.Constants
+local GameTooltip = Orbit.Tooltip
 
 local WIDGET_HEIGHT = 28
 local WHITE8x8 = "Interface\\Buttons\\WHITE8x8"

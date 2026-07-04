@@ -6,6 +6,7 @@ local OrbitEngine = Orbit.Engine
 local SB = OrbitEngine.SchemaBuilder
 local Helpers = Orbit.GroupFrameHelpers
 local HealerReg = Orbit.HealerAuraRegistry
+local GameTooltip = Orbit.Tooltip
 
 -- [ ADD SETTINGS ]-----------------------------------------------------------------------------------
 local ICON_BUTTON_SIZE = 20

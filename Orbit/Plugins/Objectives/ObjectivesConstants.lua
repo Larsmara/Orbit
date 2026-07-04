@@ -95,6 +95,14 @@ Orbit.ObjectivesConstants = {
         "WorldQuestObjectiveTracker",
         "InitiativeTasksObjectiveTracker",
     },
+
+    -- Combat auto-collapse targets only quest-type modules; scenarios/events/bonus objectives stay visible in combat.
+    COMBAT_COLLAPSE_MODULES = {
+        "QuestObjectiveTracker",
+        "CampaignQuestObjectiveTracker",
+        "WorldQuestObjectiveTracker",
+        "AchievementObjectiveTracker",
+    },
 }
 
 -- Validate/recover a colour from plain {r,g,b} or legacy colour-curve {pins=...} format.

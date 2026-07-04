@@ -3,6 +3,7 @@
 local _, addonTable = ...
 local Orbit = addonTable
 local L = Orbit.L
+local GameTooltip = Orbit.Tooltip
 local type, ipairs = type, ipairs
 local math_max = math.max
 local tinsert = table.insert

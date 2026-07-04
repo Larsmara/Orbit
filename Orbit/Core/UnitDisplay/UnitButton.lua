@@ -229,30 +229,11 @@ function UnitButton:Create(parent, unit, name, skipEventRegistration)
     f:SetScript("OnEvent", f.OnEvent)
     f:OnLoad(skipEventRegistration)
 
-    local function OrbitUnitFrame_UpdateTooltip(frame)
-        local unit = frame.unit
-        if not unit or unit == "" or not UnitExists(unit) then
-            frame.UpdateTooltip = nil
-            return
-        end
-        GameTooltip_SetDefaultAnchor(GameTooltip, frame)
-        if GameTooltip:SetUnit(unit) then
-            GameTooltip:Show()
-            frame.UpdateTooltip = OrbitUnitFrame_UpdateTooltip
-        else
-            frame.UpdateTooltip = nil
-        end
-    end
-
-    f:SetScript("OnEnter", function(self)
-        self:SetMouseOver(true)
-        OrbitUnitFrame_UpdateTooltip(self)
-    end)
-    f:SetScript("OnLeave", function(self)
-        self:SetMouseOver(false)
-        self.UpdateTooltip = nil
-        GameTooltip:FadeOut()
-    end)
+    -- Tooltip driving is delegated to Blizzard's UnitFrame_OnEnter, assigned directly (never wrapped in an Orbit closure): a Blizzard-defined handler runs untainted on hardware mouse-enter, so SetUnit/SetOwner/Show leave no Orbit taint on the shared GameTooltip — yet Raider.IO/Leatrix enhancers still fire because it IS GameTooltip. Our mouseover highlight rides a HookScript that runs after and never touches the tooltip.
+    f:SetScript("OnEnter", UnitFrame_OnEnter)
+    f:SetScript("OnLeave", UnitFrame_OnLeave)
+    f:HookScript("OnEnter", function(self) self:SetMouseOver(true) end)
+    f:HookScript("OnLeave", function(self) self:SetMouseOver(false) end)
 
     f:HookScript("OnSizeChanged", function(self)
         self:UpdateTextLayout()

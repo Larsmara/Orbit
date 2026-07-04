@@ -10,6 +10,7 @@ local Levels = Orbit.Constants.Levels
 local BuildAnchorPoint = OrbitEngine.PositionUtils.BuildAnchorPoint
 local BuildComponentSelfAnchor = OrbitEngine.PositionUtils.BuildComponentSelfAnchor
 local AnchorOffsetsToFinal = OrbitEngine.PositionUtils.AnchorOffsetsToFinal
+local GameTooltip = Orbit.Tooltip
 
 local DOCK_OFFSET_X = 14
 local DOCK_OFFSET_Y = 8
