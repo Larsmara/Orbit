@@ -16,7 +16,6 @@ local GetQuestUiMapID = GetQuestUiMapID
 local ipairs, pairs, next, wipe = ipairs, pairs, next, wipe
 local WATCH_AUTOMATIC = Enum.QuestWatchType and Enum.QuestWatchType.Automatic
 local WATCH_MANUAL = Enum.QuestWatchType and Enum.QuestWatchType.Manual
-local CONTINENT = Enum.UIMapType and Enum.UIMapType.Continent
 local ZONE = Enum.UIMapType and Enum.UIMapType.Zone
 local MAX_WQ_WATCHES_MANUAL = Constants.QuestWatchConsts.MAX_WORLD_QUEST_WATCHES_MANUAL
 
@@ -33,7 +32,7 @@ local ZONE_FILTER_EVENTS = {
     "QUEST_LOG_UPDATE",
 }
 
--- The player's current map plus its ancestors up to (and including) stopType: Continent for the quest filter (continent-wide quests show across the continent), Zone for world quests (tight — only the current zone, so an adjacent/child area like Zul'Aman never bleeds into Eversong Woods). A quest matches when its GetQuestUiMapID is in this set; sibling zones are always excluded.
+-- The player's current map plus its ancestors up to (and including) stopType — Zone for both filters (tight: only the current zone, so an adjacent/child area like Zul'Aman never bleeds into Eversong Woods, and other-continent zones are excluded). A quest matches when its GetQuestUiMapID is in this set; sibling zones are always excluded.
 local function BuildZoneMapSet(stopType)
     local set = {}
     local mapID = C_Map.GetBestMapForUnit("player")
@@ -65,7 +64,7 @@ function Plugin:EvaluateZoneFilter()
     if not self._zoneFilterEnabled then return end
     if self._zoneFilterUpdating then return end
 
-    local zoneMaps = BuildZoneMapSet(CONTINENT)
+    local zoneMaps = BuildZoneMapSet(ZONE)
     if not next(zoneMaps) then return end
 
     local tracked = self._zoneAutoTracked
@@ -221,16 +220,14 @@ function Plugin:EvaluateWorldQuestZone()
     self._zoneFilterUpdating = false
 end
 
--- Coalesce a burst of events into one next-frame pass. The pass clears _zoneFilterUpdating up front (a fresh frame is never nested in a pass), so an error mid-pass can't strand the guard true and permanently block the filter — it self-heals on the next event. Self-generated watch events just schedule one more idempotent pass, which converges.
+-- Debounce a burst of events into one pass at ~6-7Hz (the full quest-log walk is the module's heaviest work — QUEST_LOG_UPDATE can fire every frame, so a plain next-frame coalesce ran it at up to 60Hz). The pass clears _zoneFilterUpdating up front, so an error mid-pass can't strand the guard true and block the filter — it self-heals on the next event. Self-generated watch events just schedule one more idempotent pass, which converges.
 function Plugin:ScheduleZoneFilterUpdate()
-    if self._zoneFilterPending then return end
-    self._zoneFilterPending = true
-    RunNextFrame(function()
-        self._zoneFilterPending = false
+    Orbit.Async:Debounce("ObjectivesZoneFilter", function()
         self._zoneFilterUpdating = false
         self:EvaluateZoneFilter()
         self:EvaluateWorldQuestZone()
-    end)
+        self:ScheduleRefresh()
+    end, 0.15)
 end
 
 -- Re-watch the quests the filter removed (that still exist and aren't already watched) — the sets persist, so this restores across /reload too — then wipe both so turning the filter off forgets everything it managed.

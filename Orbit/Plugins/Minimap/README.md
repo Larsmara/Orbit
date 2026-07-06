@@ -19,6 +19,7 @@ Defaults carry per-component `ComponentPositions` and `DisabledComponents`; clic
 - `MASK_ROUND` clips minimap, HybridMinimap, background, and border to the same pixel-identical circle asset; keep them on the shared mask or edges drift.
 - The cluster is hidden with events and scripts intact (`unregisterEvents = false`) — reparented indicators still rely on Blizzard's own event wiring.
 - Live-toggle is supported (enable/disable without reload); the drag-resize handle drives the `Size` setting clamped to the slider's 100–400 range.
+- The `worldmap`/`calendar` click actions (incl. the fixed ZoneText/Clock handlers) route through `RunMinimapClickAction`, which combat-guards them: `ToggleWorldMap`/`ToggleCalendar` reach `ShowUIPanel`, and Blizzard blocks addon-tainted panel show/hide in combat (`DisplayInterfaceActionBlockedMessage`). Don't remove the guard — there is no untainted path for a custom button to replicate Blizzard's secure zone button. `time`/`tracking`/`addons` are unaffected (no `ShowUIPanel`).
 
 ## References
 - `Core/Canvas/` (`/canvas-mode` skill) — component drag, overrides, previews.

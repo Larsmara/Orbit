@@ -9,7 +9,7 @@ local TIMER_THROTTLE = 0.2
 local TIMER_FONT_SIZE = 26
 local FORCES_FONT_SIZE = 26   -- same size as the timer; the two lines are a centred pair
 local CENTER_LINE = 13        -- half the line spacing: timer sits +CENTER_LINE, forces -CENTER_LINE, so the pair is centred on the orb
--- +2/+3 deadlines as fractions of par. With Challenger's Peril (affix 152) it's (par-90)*f+90 — the 90s the affix adds isn't scaled (matches WarpDeplete). The death penalty is already baked into GetWorldElapsedTime, so it is NOT added again here.
+-- +2/+3 deadlines as fractions of par. With Challenger's Peril (affix 152) it's (par-90)*f+90 — the 90s the affix adds isn't scaled. The death penalty is already baked into GetWorldElapsedTime, so it is NOT added again here.
 local PLUS2_FACTOR, PLUS3_FACTOR = 0.8, 0.6
 local CHALLENGERS_PERIL_AFFIX = 152
 local CHALLENGE_TIMER_TYPE = (Enum.WorldElapsedTimerTypes and Enum.WorldElapsedTimerTypes.ChallengeMode) or 1
@@ -127,7 +127,7 @@ function Plugin:_SyncMPlusState()
     local mapID = C_ChallengeMode and C_ChallengeMode.GetActiveChallengeMapID and C_ChallengeMode.GetActiveChallengeMapID()
     if mapID then
         if not self._mplusActive then
-            -- Only START for a LIVE key: the map id stays set after completion while you're still in the instance, so a /reload there must NOT resurrect the run (IsChallengeModeActive goes false at completion — matches WarpDeplete).
+            -- Only START for a LIVE key: the map id stays set after completion while you're still in the instance, so a /reload there must NOT resurrect the run (IsChallengeModeActive goes false at completion).
             local liveKey = not C_ChallengeMode.IsChallengeModeActive or C_ChallengeMode.IsChallengeModeActive()
             if liveKey then self:_BeginMPlus(mapID) end
         else
@@ -235,7 +235,7 @@ function Plugin:_RefreshForces()
             local info = C.GetCriteriaInfo(i)
             if info then
                 if info.isWeightedProgress then
-                    -- quantityString carries the absolute count (despite a trailing %); the raw .quantity field reads as a count that can exceed the total. Mirror WarpDeplete.
+                    -- quantityString carries the absolute count (despite a trailing %); the raw .quantity field reads as a count that can exceed the total.
                     local qs = info.quantityString
                     if issecretvalue(qs) then qs = nil end
                     local t = self._forcesData or {}
@@ -715,10 +715,20 @@ function Plugin:_MPlusSilencing()
     return self._mplusActive == true
 end
 
+-- True while the orb owns the M+ scenario (live/results key with ReplaceBlizzardTimer on). Objectives reads this to drop its duplicate scenario section.
+function Plugin:IsBlizzardMPlusHidden()
+    return self._mplusHideBliz == true
+end
+
 -- [ BLIZZARD M+ BLOCK ]------------------------------------------------------------------------------
 -- Reversible, taint-free hide: SetAlpha (insecure; ObjectiveTrackerFrame is already an insecure VE entry) re-asserted via a post-hook on the module's Update. Park is wrong here — it unregisters events + reparents with no restore, breaking delve/normal scenarios after the key.
 function Plugin:_SetBlizMPlusHidden(hidden)
-    self._mplusHideBliz = hidden
+    hidden = hidden and true or false
+    if self._mplusHideBliz ~= hidden then
+        self._mplusHideBliz = hidden
+        -- Tell Objectives to drop/restore its duplicate scenario section for the key.
+        Orbit.EventBus:Fire("ORBIT_MPLUS_OWNERSHIP_CHANGED", hidden)
+    end
     local block = ScenarioObjectiveTracker
     if not block then return end
     if not self._mplusBlizHooked then

@@ -64,15 +64,13 @@ function Layout:CreateColorPicker(parent, label, initialColor, callback, opts)
                         C_Timer.After(0.1, function() if picker:IsOpen() then picker:StartTour() end end)
                     end
                 end,
-                callback = function(result, wasCancelled)
-                    if wasCancelled or not result then return end
-                    local pin = result.pins and result.pins[1]
+                -- Apply whatever the lib hands us: the live colour while picking, the picked colour on Apply, or the snapshot on cancel/close (revert to the previous setting).
+                callback = function(result)
+                    local pin = result and result.pins and result.pins[1]
                     if pin and pin.color then
                         frame.UpdateColor(pin.color.r, pin.color.g, pin.color.b, pin.color.a, pin.type)
-                    else
-                        if frame.allowClear then
-                            frame.ClearColor()
-                        end
+                    elseif frame.allowClear then
+                        frame.ClearColor()
                     end
                 end,
             })

@@ -1,5 +1,8 @@
 [start]
 
+### New
+- [Tooltips] Added tooltips to QoL
+
 ### Updates
 - [ObjectiveFrame] Objective Frame Scroll works properly now if quest log is rather full.
 - [ObjectiveFrame] Added "Blizzard Style" to Objective Frame
@@ -18,6 +21,10 @@
 - [Fonts] Font shadow should now work with ActionBars, BossCastBars & CDM BuffBars
 - [CanvasMode] Better drag representation of Components on the Action Bars
 - [CanvasMode] Name Text would position wrong outside of the frame and not be true WYSIWYG
+
+### Bugfixes
+- [Objectives] Improvements to more edgecases / scroll issues / scenarios
+- [Tooltips] Added some secret value gates
 
 #### Message
 - Working on a large update for 12.1.0, so next few updates will be for bugfixes only <3

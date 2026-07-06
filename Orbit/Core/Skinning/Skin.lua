@@ -185,6 +185,16 @@ function Skin:ComputeBorderOutset(frame, edgeSize, borderOffset, snapScale)
     return Engine.Pixel:Snap((adjEdge / 2) + (borderOffset / ownScale), snapScale), adjEdge
 end
 
+-- Blizzard's backdrop coord setup does width*coord arithmetic; on a frame whose width goes secret (e.g. a combat World-Quest tooltip) that throws on our tainted overlay — Blizzard's own border wouldn't, being untainted. Skip the recompute while the width is secret; the border keeps its last coords instead of erroring.
+local function GuardBackdropSecretWidth(overlay)
+    local orig = overlay.SetupTextureCoordinates
+    if not orig then return end
+    overlay.SetupTextureCoordinates = function(self, ...)
+        if issecretvalue(self:GetWidth()) then return end
+        return orig(self, ...)
+    end
+end
+
 function Skin:ApplyNineSliceBorder(frame, styleEntry)
     if not frame or not styleEntry or not styleEntry.edgeFile then return end
     -- Rounded styles share the edge-file field but draw a slice border — delegate so every caller handles rounded for free.
@@ -193,6 +203,7 @@ function Skin:ApplyNineSliceBorder(frame, styleEntry)
     self:ClearRoundedMaskFromSurfaces(frame)
     if not frame._edgeBorderOverlay then
         frame._edgeBorderOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        GuardBackdropSecretWidth(frame._edgeBorderOverlay)
     end
     local overlay = frame._edgeBorderOverlay
     local borderLevel = styleEntry.isIcon and Constants.Levels.IconBorder or Constants.Levels.Border
@@ -231,6 +242,7 @@ function Skin:ApplyRoundedBorder(frame, styleEntry)
     if not frame or not styleEntry then return end
     if not frame._edgeBorderOverlay then
         frame._edgeBorderOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        GuardBackdropSecretWidth(frame._edgeBorderOverlay)
     end
     local overlay = frame._edgeBorderOverlay
     local borderLevel = styleEntry.isIcon and Constants.Levels.IconBorder or Constants.Levels.Border

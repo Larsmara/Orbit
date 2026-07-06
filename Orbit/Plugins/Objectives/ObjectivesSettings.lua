@@ -12,7 +12,7 @@ local Plugin = Orbit:GetPlugin("Objectives")
 local function OnChange(plugin, systemIndex, key)
     return function(val)
         plugin:SetSetting(systemIndex, key, val)
-        -- Coalesce rapid changes: a slider drag fires onChange every frame and each ApplySettings runs a full re-skin, so apply once on the next frame rather than per tick.
+        -- Coalesce rapid changes: a slider drag fires onChange every frame, so apply once next frame.
         if not plugin._applyPending then
             plugin._applyPending = true
             RunNextFrame(function()
@@ -25,6 +25,12 @@ end
 
 local function FontSizePx(v) return v .. "px" end
 
+local function FormatLabel(v)
+    if v == C.FORMAT_MIN then return L.PLU_OBJ_FORMAT_COMPACT end
+    if v == C.FORMAT_MAX then return L.PLU_OBJ_FORMAT_LARGE end
+    return L.PLU_OBJ_FORMAT_STANDARD
+end
+
 function Plugin:AddSettings(dialog, systemFrame)
     local systemIndex = systemFrame and systemFrame.systemIndex or SYSTEM_ID
     local SB = OrbitEngine.SchemaBuilder
@@ -34,48 +40,11 @@ function Plugin:AddSettings(dialog, systemFrame)
         controls = {},
     }
 
-    -- The Orbit skin owns colours/fonts/separators; Blizzard style retires those controls and the Colours tab entirely.
-    local orbitStyle = self:IsOrbitStyle()
-    local function OrbitStyleVisible() return self:IsOrbitStyle() end
-
-    local tabs = { L.PLU_OBJ_TAB_LAYOUT, L.PLU_OBJ_TAB_BEHAVIOUR }
-    if orbitStyle then table.insert(tabs, L.PLU_OBJ_TAB_COLOURS) end
-    -- If Blizzard style just retired the Colours tab while it was active, fall back to Layout.
-    if dialog.orbitCurrentTab == L.PLU_OBJ_TAB_COLOURS and not orbitStyle then
-        dialog.orbitCurrentTab = L.PLU_OBJ_TAB_LAYOUT
-    end
-
+    local tabs = { L.PLU_OBJ_TAB_LAYOUT, L.PLU_OBJ_TAB_BEHAVIOUR, L.PLU_OBJ_TAB_COLOURS }
     SB:SetTabRefreshCallback(dialog, self, systemFrame)
     local currentTab = SB:AddSettingsTabs(schema, dialog, tabs, L.PLU_OBJ_TAB_LAYOUT)
 
     if currentTab == L.PLU_OBJ_TAB_LAYOUT then
-        -- Tracker Style: Orbit applies the custom skin; Blizzard keeps the native chrome (larger bars/headers). Reload-gated — the skin strips Blizzard textures irreversibly within a session, so a clean swap needs a reload either direction.
-        table.insert(schema.controls, {
-            type = "dropdown",
-            key = "StyleMode",
-            label = L.PLU_OBJ_STYLE_MODE,
-            tooltip = L.PLU_OBJ_STYLE_MODE_TT,
-            options = {
-                { text = L.PLU_OBJ_STYLE_ORBIT, value = C.STYLE_ORBIT },
-                { text = L.PLU_OBJ_STYLE_BLIZZARD, value = C.STYLE_BLIZZARD },
-            },
-            default = C.STYLE_MODE_DEFAULT,
-            onChange = function(val)
-                if val == (self:GetSetting(systemIndex, "StyleMode") or C.STYLE_MODE_DEFAULT) then return end
-                self:SetSetting(systemIndex, "StyleMode", val)
-                -- Re-render so the dependent controls + Colours tab reflect the pending style immediately.
-                OrbitEngine.Layout:Reset(dialog)
-                self:AddSettings(dialog, systemFrame)
-                OrbitEngine.Layout:ShowConfirm({
-                    title = L.PLU_OBJ_STYLE_MODE,
-                    text = L.MSG_PROFILE_RELOAD_REQUIRED,
-                    acceptText = L.PLG_RELOAD_UI,
-                    onAccept = function() ReloadUI() end,
-                })
-            end,
-        })
-
-        -- Width
         table.insert(schema.controls, {
             type = "slider",
             key = "Width",
@@ -87,7 +56,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "Width"),
         })
 
-        -- Height
         table.insert(schema.controls, {
             type = "slider",
             key = "Height",
@@ -99,7 +67,18 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "Height"),
         })
 
-        -- Header Font Size
+        table.insert(schema.controls, {
+            type = "slider",
+            key = "Format",
+            label = L.PLU_OBJ_FORMAT,
+            min = C.FORMAT_MIN,
+            max = C.FORMAT_MAX,
+            step = 1,
+            default = C.FORMAT_DEFAULT,
+            formatter = FormatLabel,
+            onChange = OnChange(self, systemIndex, "Format"),
+        })
+
         table.insert(schema.controls, {
             type = "slider",
             key = "HeaderFontSize",
@@ -109,11 +88,9 @@ function Plugin:AddSettings(dialog, systemFrame)
             step = C.HEADER_FONT_SIZE_STEP,
             default = C.HEADER_FONT_SIZE_DEFAULT,
             formatter = FontSizePx,
-            visibleIf = OrbitStyleVisible,
             onChange = OnChange(self, systemIndex, "HeaderFontSize"),
         })
 
-        -- Title Font Size
         table.insert(schema.controls, {
             type = "slider",
             key = "TitleFontSize",
@@ -123,11 +100,9 @@ function Plugin:AddSettings(dialog, systemFrame)
             step = C.TITLE_FONT_SIZE_STEP,
             default = C.TITLE_FONT_SIZE_DEFAULT,
             formatter = FontSizePx,
-            visibleIf = OrbitStyleVisible,
             onChange = OnChange(self, systemIndex, "TitleFontSize"),
         })
 
-        -- Objective Font Size
         table.insert(schema.controls, {
             type = "slider",
             key = "ObjectiveFontSize",
@@ -137,11 +112,9 @@ function Plugin:AddSettings(dialog, systemFrame)
             step = C.OBJECTIVE_FONT_SIZE_STEP,
             default = C.OBJECTIVE_FONT_SIZE_DEFAULT,
             formatter = FontSizePx,
-            visibleIf = OrbitStyleVisible,
             onChange = OnChange(self, systemIndex, "ObjectiveFontSize"),
         })
 
-        -- Background Opacity
         table.insert(schema.controls, {
             type = "slider",
             key = "BackgroundOpacity",
@@ -154,7 +127,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "BackgroundOpacity"),
         })
 
-        -- Show Border (rendered last)
         table.insert(schema.controls, {
             type = "checkbox",
             key = "ShowBorder",
@@ -164,7 +136,6 @@ function Plugin:AddSettings(dialog, systemFrame)
         })
 
     elseif currentTab == L.PLU_OBJ_TAB_BEHAVIOUR then
-        -- Progress Bar Label (token format string, e.g. "Current / Max (%)") — rendered first
         local progressTooltip = { { title = L.CFG_FORMAT_TOOLTIP_TITLE } }
         for _, token in ipairs(C.PROGRESS_TOKENS) do
             table.insert(progressTooltip, { key = token.key, value = token.sample })
@@ -178,31 +149,17 @@ function Plugin:AddSettings(dialog, systemFrame)
             default = C.PROGRESS_FORMAT_DEFAULT,
             tooltipLines = progressTooltip,
             validate = function(str) return self:ValidateProgressFormat(str) end,
-            visibleIf = OrbitStyleVisible,
             onChange = OnChange(self, systemIndex, "ProgressBarLabelFormat"),
         })
 
-        -- Header Separators
-        table.insert(schema.controls, {
-            type = "checkbox",
-            key = "HeaderSeparators",
-            label = L.PLU_OBJ_HEADER_SEPARATORS,
-            default = true,
-            visibleIf = OrbitStyleVisible,
-            onChange = OnChange(self, systemIndex, "HeaderSeparators"),
-        })
-
-        -- Show Quest Count
         table.insert(schema.controls, {
             type = "checkbox",
             key = "ShowQuestCount",
             label = L.PLU_OBJ_SHOW_QUEST_COUNT,
             default = true,
-            visibleIf = OrbitStyleVisible,
             onChange = OnChange(self, systemIndex, "ShowQuestCount"),
         })
 
-        -- Auto-Collapse in Combat
         table.insert(schema.controls, {
             type = "checkbox",
             key = "AutoCollapseCombat",
@@ -211,7 +168,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "AutoCollapseCombat"),
         })
 
-        -- Show Only Current Zone (watch-list zone filter; applies in both styles, so no visibleIf)
         table.insert(schema.controls, {
             type = "checkbox",
             key = "ZoneFilter",
@@ -221,7 +177,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "ZoneFilter"),
         })
 
-        -- Track Area World Quests (auto-watch every world quest on the current map)
         table.insert(schema.controls, {
             type = "checkbox",
             key = "ZoneWorldQuests",
@@ -232,7 +187,6 @@ function Plugin:AddSettings(dialog, systemFrame)
         })
 
     elseif currentTab == L.PLU_OBJ_TAB_COLOURS then
-        -- Module Header (supports the picker's Class Color pin)
         table.insert(schema.controls, {
             type = "solidcolor",
             key = "HeaderColor",
@@ -241,7 +195,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "HeaderColor"),
         })
 
-        -- Quest Title
         table.insert(schema.controls, {
             type = "solidcolor",
             key = "TitleColor",
@@ -250,7 +203,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "TitleColor"),
         })
 
-        -- Completed Quest
         table.insert(schema.controls, {
             type = "solidcolor",
             key = "CompletedColor",
@@ -259,7 +211,6 @@ function Plugin:AddSettings(dialog, systemFrame)
             onChange = OnChange(self, systemIndex, "CompletedColor"),
         })
 
-        -- Focused Quest
         table.insert(schema.controls, {
             type = "solidcolor",
             key = "FocusColor",

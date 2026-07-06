@@ -34,7 +34,7 @@ local BLIZZARD_REGISTRY = {
     { key = "DebuffFrame",           display = L.PLU_VE_DEBUFF_FRAME,        blizzardFrame = "DebuffFrame",               ownedBy = "Player Debuffs" },
     { key = "ChatFrame",             display = L.PLU_VE_CHAT_FRAME,          blizzardFrame = "ChatFrame1" },
     { key = "StatusTrackingBar",     display = L.PLU_VE_XP_REP_HONOR_BAR,    blizzardFrame = "StatusTrackingBarManager",  ownedBy = "Status Widget" },
-    { key = "DurabilityFrame",       display = L.PLU_VE_DURABILITY,          blizzardFrame = "DurabilityFrame" },
+    { key = "DurabilityFrame",       display = L.PLU_VE_DURABILITY,          blizzardFrame = "DurabilityFrame",           ownedBy = "Status Widget" },
     { key = "VehicleSeatIndicator",  display = L.PLU_VE_VEHICLE_SEAT,        blizzardFrame = "VehicleSeatIndicator" },
     { key = "DamageMeter",           display = L.PLU_VE_DAMAGE_METER,        blizzardFrame = "DamageMeter",               ownedBy = "Damage Meter" },
     { key = "BlizzPlayerCastBar",    display = L.PLU_VE_PLAYER_CAST_BAR,     blizzardFrame = "PlayerCastingBarFrame",     ownedBy = "Player Cast Bar", opacityOnly = true },

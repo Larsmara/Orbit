@@ -191,7 +191,8 @@ function FP:Recompute()
     wipe(anyHovered)
     hasLinked = false
     local db = GetDB()
-    if db and not db.revealAll then
+    -- Edit Mode suppresses every fade cap (same effect as Reveal All) so no profile dims or mouseover-hides a frame while it is being arranged.
+    if db and not db.revealAll and not Orbit:IsEditMode() then
         -- db.profiles is ordered highest-priority first; the first firing profile to own a frame claims it, so lower-priority profiles never override the winner.
         for _, p in ipairs(db.profiles) do
             local firing = self:IsFiring(p)
@@ -508,3 +509,9 @@ C_Timer.After(0, function()
         Orbit.EventBus:Fire("ORBIT_FADE_PROFILES_CHANGED")
     end) end
 end)
+
+-- Edit Mode drops every fade cap on entry (Recompute now treats it like Reveal All) and restores them on exit. editModeActive is set before these events fire, so the IsEditMode read inside Recompute is already correct — no defer needed.
+if EventRegistry then
+    EventRegistry:RegisterCallback("EditMode.Enter", function() FP:Recompute() end, FP)
+    EventRegistry:RegisterCallback("EditMode.Exit",  function() FP:Recompute() end, FP)
+end

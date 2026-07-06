@@ -2,6 +2,14 @@
     <Script file="ObjectivesConstants.lua"/>
     <Script file="ObjectivesPlugin.lua"/>
     <Script file="ObjectivesSkin.lua"/>
+    <Script file="ObjectivesModel.lua"/>
+    <Script file="ObjectivesQuestProvider.lua"/>
+    <Script file="ObjectivesAchievementProvider.lua"/>
+    <Script file="ObjectivesScenarioProvider.lua"/>
+    <Script file="ObjectivesTrackableProvider.lua"/>
+    <Script file="ObjectivesRender.lua"/>
+    <Script file="ObjectivesInteractions.lua"/>
     <Script file="ObjectivesZoneFilter.lua"/>
+    <Script file="ObjectivesEvents.lua"/>
     <Script file="ObjectivesSettings.lua"/>
 </Ui>

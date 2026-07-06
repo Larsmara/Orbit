@@ -115,7 +115,7 @@ function Plugin:OnLoad()
     self.frame:SetSize(DEFAULT_SIZE, DEFAULT_SIZE)
     OrbitEngine.Pixel:Enforce(self.frame)
     self.frame:SetClampedToScreen(true)
-    -- Match Blizzard's MinimapCluster strata so third-party buttons parented to Minimap land where they expect.
+    -- Match Blizzard's MinimapCluster strata so buttons parented to Minimap land where they expect.
     self.frame:SetFrameStrata(Orbit.Constants.Strata.Base)
     self.frame.systemIndex = SYSTEM_ID
     self.frame.editModeName = self.displayName
@@ -201,7 +201,7 @@ function Plugin:OnLoad()
     self.frame.ZoneText.Text:SetAllPoints()
     self.frame.ZoneText.visual = self.frame.ZoneText.Text -- canvas override target
 
-    self.frame.ZoneText:SetScript("OnClick", function() ToggleWorldMap() end)
+    self.frame.ZoneText:SetScript("OnClick", function() self:RunMinimapClickAction("worldmap", self.frame.ZoneText) end)
     self.frame.ZoneText:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM")
         local zone = GetZoneText() or ""
@@ -242,12 +242,8 @@ function Plugin:OnLoad()
     self.frame.Clock.InviteGlow:SetColorTexture(1, 0.82, 0, 0.35)
     self.frame.Clock.InviteGlow:Hide()
 
-    self.frame.Clock:SetScript("OnClick", function(btn, button)
-        if button == "RightButton" then
-            ToggleCalendar()
-        else
-            TimeManager_Toggle()
-        end
+    self.frame.Clock:SetScript("OnClick", function(_, button)
+        self:RunMinimapClickAction(button == "RightButton" and "calendar" or "time", self.frame.Clock)
     end)
     self.frame.Clock:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_LEFT")

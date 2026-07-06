@@ -3,6 +3,7 @@
 
 ---@type Orbit
 local Orbit = Orbit
+local L = Orbit.L
 local OrbitEngine = Orbit.Engine
 local C = Orbit.MinimapConstants
 
@@ -104,6 +105,11 @@ local function SyncDifficultyPreviewIcon(difficulty)
 end
 
 function Plugin:RunMinimapClickAction(action, frame)
+    -- worldmap/calendar route through ShowUIPanel, which Blizzard blocks for tainted (addon) callers in combat — attempting it throws "Interface Action Failed".
+    if (action == "worldmap" or action == "calendar") and InCombatLockdown() then
+        UIErrorsFrame:AddMessage(L.PLU_MINIMAP_COMBAT_BLOCK, 1, 0, 0)
+        return
+    end
     if action == "worldmap" then
         ToggleWorldMap()
     elseif action == "tracking" then

@@ -185,6 +185,28 @@ local function RestoreBlizzardStatusBar()
     if StatusTrackingBarManager.UpdateBarsShown then StatusTrackingBarManager:UpdateBarsShown() end
 end
 
+-- [ BLIZZARD DURABILITY FRAME ]----------------------------------------------------------------------
+-- The orb renders its own durability warning (cracked-metal centre + ring cracks), so Blizzard's insecure DurabilityFrame is redundant while the widget is on. A flag-gated Show/SetShown hook survives its own UPDATE_INVENTORY_ALERTS-driven re-shows; SetShown is hooked alongside Show because the C path doesn't route through the Lua-hookable Show.
+local durabilityHooked = false
+local function HideBlizzardDurability()
+    if not DurabilityFrame then return end
+    Plugin._durabilityHidden = true
+    if not durabilityHooked then
+        local function reHide(f) if Plugin._durabilityHidden then f:Hide() end end
+        hooksecurefunc(DurabilityFrame, "Show", reHide)
+        hooksecurefunc(DurabilityFrame, "SetShown", function(f, shown) if shown then reHide(f) end end)
+        durabilityHooked = true
+    end
+    DurabilityFrame:Hide()
+end
+
+-- Live-disable hands the frame back: clear the flag, then let SetAlerts recompute whether Blizzard should show it.
+local function RestoreBlizzardDurability()
+    if not DurabilityFrame then return end
+    Plugin._durabilityHidden = false
+    if DurabilityFrame.SetAlerts then DurabilityFrame:SetAlerts() end
+end
+
 -- [ LIFECYCLE ]--------------------------------------------------------------------------------------
 function Plugin:OnLoad()
     self._disabled = false   -- cleared on (re-)enable; OnDisable sets it to quiesce the centre while off
@@ -292,12 +314,14 @@ function Plugin:OnLoad()
     self:SetupHousing()
     self:SetupMythicPlus()
     HideBlizzardStatusBar()
+    HideBlizzardDurability()
 end
 
 -- liveToggle teardown: the framework only hides the orb frame, so quiesce the centre machine ourselves; _disabled then no-ops Enqueue + the still-installed suppression hooks, and the drivers are nil'd so they rebind to the frame OnLoad rebuilds on re-enable.
 function Plugin:OnDisable()
     self._disabled = true
     if not Orbit:IsBlizzardHidden("Status Widget") then RestoreBlizzardStatusBar() end
+    RestoreBlizzardDurability()
     if not self.frame then return end
     self:_FqCancelTimer()
     self._fqQueue, self._fqActive, self._fqPhase = nil, nil, nil

@@ -1,7 +1,6 @@
 ---@type Orbit
 local Orbit = Orbit
 local OrbitEngine = Orbit.Engine
-local LSM = LibStub("LibSharedMedia-3.0")
 
 -- [ CONSTANTS ]--------------------------------------------------------------------------------------
 local C = Orbit.ObjectivesConstants
@@ -10,18 +9,17 @@ local SYSTEM_ID = C.SYSTEM_ID
 -- [ PLUGIN REGISTRATION ]----------------------------------------------------------------------------
 local Plugin = Orbit:RegisterPlugin("Objectives", SYSTEM_ID, {
     defaults = {
-        StyleMode = C.STYLE_MODE_DEFAULT,
         Scale = C.DEFAULT_SCALE,
         Width = C.DEFAULT_WIDTH,
         Height = C.DEFAULT_HEIGHT,
         HeaderColor = C.HEADER_COLOR_DEFAULT,
         ShowBorder = false,
         BackgroundOpacity = C.BG_OPACITY_DEFAULT,
-        HeaderSeparators = true,
         AutoCollapseCombat = false,
         ZoneFilter = false,
         ZoneWorldQuests = false,
         ShowQuestCount = true,
+        Format = C.FORMAT_DEFAULT,
         Opacity = C.OPACITY_DEFAULT,
         ProgressBarLabelFormat = C.PROGRESS_FORMAT_DEFAULT,
         TitleFontSize = C.TITLE_FONT_SIZE_DEFAULT,
@@ -34,13 +32,11 @@ local Plugin = Orbit:RegisterPlugin("Objectives", SYSTEM_ID, {
     displayName = Orbit.L.PLG_NAME_OBJECTIVES,
 })
 
--- Key binding label for ORBIT_OBJECTIVES_TOGGLE (Bindings.xml); shown under BINDING_HEADER_ORBIT.
 _G.BINDING_NAME_ORBIT_OBJECTIVES_TOGGLE = Orbit.L.PLU_OBJ_BINDING_TOGGLE
 
 Mixin(Plugin, Orbit.NativeBarMixin)
 
--- [ COLOUR MIGRATION ]-------------------------------------------------------------------------------
--- Migrates colour-curve {pins=...} format to plain {r,g,b,a} tables. Runs once at OnLoad.
+-- [ MIGRATION ]--------------------------------------------------------------------------------------
 local COLOR_KEYS = { "TitleColor", "CompletedColor", "FocusColor" }
 
 local function MigrateColorSettings(plugin)
@@ -53,7 +49,7 @@ local function MigrateColorSettings(plugin)
     end
 end
 
--- Migrate retired ClassColorHeaders/ProgressBarMode keys, then clear them so this runs once.
+-- Retire dropped keys (StyleMode, legacy curve/progress) and wipe old collapse state that keyed Blizzard module globals (had a "_main" entry) so it re-keys to our section keys.
 local function MigrateLegacySettings(plugin)
     if plugin:GetSetting(SYSTEM_ID, "ClassColorHeaders") == true then
         plugin:SetSetting(SYSTEM_ID, "HeaderColor", { r = 1, g = 1, b = 1, a = 1, type = "class" })
@@ -66,9 +62,12 @@ local function MigrateLegacySettings(plugin)
         plugin:SetSetting(SYSTEM_ID, "ProgressBarLabelFormat", mode == "XY" and "Current / Max" or "Current / Max (%)")
     end
     plugin:SetSetting(SYSTEM_ID, "ProgressBarMode", nil)
-
     plugin:SetSetting(SYSTEM_ID, "SkinProgressBars", nil)
     plugin:SetSetting(SYSTEM_ID, "BlizzardProgressBars", nil)
+    plugin:SetSetting(SYSTEM_ID, "StyleMode", nil)
+
+    local cs = Orbit.db and Orbit.db.AccountSettings and Orbit.db.AccountSettings.ObjectivesCollapseState
+    if cs and cs._main ~= nil then Orbit.db.AccountSettings.ObjectivesCollapseState = {} end
 end
 
 -- True when an anchor's width-sync owns our width (top/bottom edge).
@@ -82,228 +81,356 @@ local function IsWidthSynced(frame)
     return (edgeAxis and edgeAxis.perpendicular == Axis.horizontal) or false
 end
 
--- [ STYLE MODE ]-------------------------------------------------------------------------------------
--- "Blizzard" leaves the native tracker chrome (larger bars/headers) intact inside the Orbit container; "Orbit" applies the custom skin. Read by the skin gate (SetSkinEnabled), the cosmetic passes (InstallSkinHooks/ApplySkins), the content-height separator reservation, and the settings UI. Reload-gated, since the skin strips Blizzard textures irreversibly within a session.
-function Plugin:IsOrbitStyle()
-    return (self:GetSetting(SYSTEM_ID, "StyleMode") or C.STYLE_MODE_DEFAULT) ~= C.STYLE_BLIZZARD
-end
-
 -- [ LIFECYCLE ]--------------------------------------------------------------------------------------
 function Plugin:OnLoad()
-    -- When disabled via Plugin Manager (requires reload), skip all initialisation
     if not Orbit:IsPluginEnabled(self.name) then return end
 
     MigrateColorSettings(self)
     MigrateLegacySettings(self)
 
-    -- Create container frame that will own the Blizzard ObjectiveTrackerFrame
     self.frame = CreateFrame("Frame", "OrbitObjectivesContainer", UIParent)
-    -- Pixel-lock every dynamic size change (content-fit, collapse animation, resize, width-sync) to the physical grid, the way FrameFactory frames get it for free.
+    -- Pixel-lock every dynamic size change (content-fit, resize, width-sync) to the physical grid.
     OrbitEngine.Pixel:Enforce(self.frame)
     self.frame:SetSize(C.DEFAULT_WIDTH, C.DEFAULT_HEIGHT)
     self.frame:SetClampedToScreen(true)
     self.frame.systemIndex = SYSTEM_ID
     self.frame.editModeName = self.displayName
     self.frame.orbitResizeBounds = {
-        minW     = C.WIDTH_MIN,
-        maxW     = C.WIDTH_MAX,
-        minH     = C.HEIGHT_MIN,
-        maxH     = C.HEIGHT_MAX,
+        minW = C.WIDTH_MIN,
+        maxW = C.WIDTH_MAX,
+        minH = C.HEIGHT_MIN,
+        maxH = C.HEIGHT_MAX,
         widthKey = "Width",
         heightKey = "Height",
     }
-
-    self.frame.anchorOptions = {
-        horizontal = true,
-        vertical = true,
-    }
-
+    self.frame.anchorOptions = { horizontal = true, vertical = true }
     -- Force the saved/restored anchor to keep a TOP component so the box grows downward on resize instead of re-centering.
     self.frame.orbitForceAnchorPoint = "TOPRIGHT"
-
     -- When docked top/bottom to another Orbit frame, match that frame's width.
     self.frame.orbitWidthSync = true
 
-    -- Native ScrollFrame viewport (the proven Kaliel's-Tracker pattern): it clips and offsets its scroll child at the engine level, replacing the hand-rolled clip frame + SetPoint-offset scroll. It only clips its own child, so the Edit Mode selection/resize handle (sibling children of self.frame) stay visible. Inset/size applied in ApplySettings.
+    -- ScrollFrame clips only its own scroll child, so the Edit Mode selection/resize handles (siblings of the child) stay visible.
     self.scrollFrame = CreateFrame("ScrollFrame", "OrbitObjectivesScroll", self.frame)
-    -- Clip only while content overflows (toggled in OnScrollRangeChanged). When everything fits, clipping is off so scenario widget button rows and their popouts (Lorewalking HelpTip bubbles anchored past the box edge) render in full instead of being cut off at the box edge.
     self.scrollFrame:SetClipsChildren(false)
     self.scrollFrame:EnableMouseWheel(true)
     self.scrollFrame:SetScript("OnMouseWheel", function(_, delta) self:OnScroll(delta) end)
-    self.scrollFrame:SetScript("OnScrollRangeChanged", function(sf, _, yRange)
-        -- Clip only when scrolling is actually needed; off when content fits so widget popouts aren't cut off.
-        sf:SetClipsChildren(yRange > 0)
-        -- Content shrinking (quest dropped / collapse) can leave the scroll past the new end; clamp back into range.
-        if sf:GetVerticalScroll() > yRange then sf:SetVerticalScroll(math.max(0, yRange)) end
-    end)
+    self.scrollFrame:SetScript("OnScrollRangeChanged", function() self:UpdateScrollClip() end)
 
     self.scrollChild = CreateFrame("Frame", "OrbitObjectivesScrollChild", self.scrollFrame)
     self.scrollChild:SetSize(C.DEFAULT_WIDTH, C.DEFAULT_HEIGHT)
     self.scrollFrame:SetScrollChild(self.scrollChild)
     self.scrollFrame:SetScript("OnSizeChanged", function(_, w) self.scrollChild:SetWidth(w) end)
 
-    -- Default position: right side, below minimap
     self.frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", C.DEFAULT_ANCHOR_X, C.DEFAULT_ANCHOR_Y)
 
-    -- Register to Orbit edit mode + position persistence
     OrbitEngine.Frame:AttachSettingsListener(self.frame, self, SYSTEM_ID)
     OrbitEngine.Frame:RestorePosition(self.frame, self, SYSTEM_ID)
 
-    self:RegisterStandardEvents()
-    self:RegisterVisibilityEvents()
-    self:InstallCombatCollapseHooks()
-
-    -- Root frame: standard events miss border/background changes, so listen explicitly.
-    Orbit.EventBus:On("ORBIT_BORDER_SIZE_CHANGED", function() self:ApplySettings() end, self)
-    Orbit.EventBus:On("ORBIT_GLOBAL_BACKDROP_CHANGED", function() self:ApplySettings() end, self)
-
-    -- Profile changes are already covered by the shared restore (Persistence:RestoreAffectedByProfileChange runs over every attached frame) plus RefreshAllPlugins' ApplySettings. Spec changes are not: the shared spec-restore deliberately covers only spec-scoped plugins (perf guard) and Objectives isn't one, yet Blizzard re-anchors the managed tracker on spec — so re-assert here. Next frame, after Blizzard's relayout.
-    Orbit.EventBus:On("ORBIT_PLAYER_SPECIALIZATION_CHANGED", function() RunNextFrame(function() self:ReassertLayout() end) end, self)
-
-    -- Hook ObjectiveTracker addon loading
-    local function HookTracker()
-        self:CaptureTracker()
-        self:InstallSkinHooks()
-        self:InstallCollapseHooks()
+    -- Re-apply only on a genuine anchor CHANGE: the engine re-fires this with the same parent/edge/padding on every edit-mode open.
+    self.frame.OnAnchorChanged = function(_, parent, edge, padding)
+        if parent == self._anchorParent and edge == self._anchorEdge and padding == self._anchorPadding then return end
+        self._anchorParent, self._anchorEdge, self._anchorPadding = parent, edge, padding
         self:ApplySettings()
     end
 
+    -- The taint launder: this OnUpdate frame is created here on a clean stack and never touched again, so FullLayout (which Show()s pooled rows) always runs clean no matter how many tainted hook paths call ScheduleRefresh.
+    self:RegisterUpdate(function(_, elapsed)
+        self._pollAccum = (self._pollAccum or 0) + elapsed
+        if self._pollAccum < C.REFRESH_POLL_INTERVAL then return end
+        self._pollAccum = 0
+        if not self._refreshPending then return end
+        self._refreshPending = false
+        self:FullLayout()
+    end)
+
+    self:RegisterStandardEvents()
+    -- Replace the standard heavy edit-mode Enter/Exit (a full ApplySettings re-anchors + re-Shows the reparented Blizzard scenario block every toggle) with a height-only resize. A genuine move still re-applies via OnAnchorChanged.
+    OrbitEngine.EditMode:UnregisterCallbacks(self)
+    OrbitEngine.EditMode:RegisterCallbacks({
+        Enter = function() self:OnEditModeToggle() end,
+        Exit = function() self:OnEditModeToggle() end,
+    }, self)
+    self:RegisterVisibilityEvents()
+    self:InstallEventHandlers()
+
+    Orbit.EventBus:On("ORBIT_BORDER_SIZE_CHANGED", function() self:ApplySettings() end, self)
+    Orbit.EventBus:On("ORBIT_GLOBAL_BACKDROP_CHANGED", function()
+        -- Bar background reads the global backdrop, but the bar re-skin is epoch-gated on texture/border only — bump so it re-applies.
+        Orbit.ObjectivesSkin._barStyleEpoch = Orbit.ObjectivesSkin._barStyleEpoch + 1
+        self:ApplySettings()
+    end, self)
+    Orbit.EventBus:On("ORBIT_PLAYER_SPECIALIZATION_CHANGED", function() self:ScheduleRefresh() end, self)
+    -- StatusWidget's M+ orb owns the keystone display; drop our duplicate scenario block while it does.
+    Orbit.EventBus:On("ORBIT_MPLUS_OWNERSHIP_CHANGED", function(_, hidden)
+        self._mplusOwned = hidden and true or false
+        self:ScheduleRefresh()
+    end, self)
+    -- Recover current ownership on boot: StatusWidget loads first, so on a reload mid-key its one-shot event fired before we listened — pull the flag it already set.
+    local sw = Orbit:GetPlugin("Status Widget")
+    if sw and sw.IsBlizzardMPlusHidden then self._mplusOwned = sw:IsBlizzardMPlusHidden() end
+
+    local function Boot()
+        -- The manager assigns its modules at PLAYER_ENTERING_WORLD (after this Boot); hook Init so our removal runs once they exist.
+        if ObjectiveTrackerManager and not self._initHooked then
+            self._initHooked = true
+            hooksecurefunc(ObjectiveTrackerManager, "Init", function() self:SuppressBlizzardTracker() end)
+        end
+        self:SuppressBlizzardTracker()
+        self:ApplySettings()
+        self:ScheduleRefresh()
+    end
     if C_AddOns.IsAddOnLoaded("Blizzard_ObjectiveTracker") then
-        HookTracker()
+        Boot()
     else
         self._addonLoader = CreateFrame("Frame")
         self._addonLoader:RegisterEvent("ADDON_LOADED")
-        self._addonLoader:SetScript("OnEvent", function(f, event, addonName)
+        self._addonLoader:SetScript("OnEvent", function(f, _, addonName)
             if addonName == "Blizzard_ObjectiveTracker" then
-                HookTracker()
+                Boot()
                 f:UnregisterEvent("ADDON_LOADED")
             end
         end)
     end
 end
 
--- [ CAPTURE ]----------------------------------------------------------------------------------------
-function Plugin:CaptureTracker()
-    local tracker = ObjectiveTrackerFrame
-    if not tracker then return end
+-- [ BLIZZARD SUPPRESSION ]---------------------------------------------------------------------------
+-- Quest-family modules whose Update renders the POI number-buttons that write the shared QuestCache (the WorldMap taint). We remove them from Blizzard's container so they never render, and render them ourselves.
+local BLIZZARD_REMOVE = {
+    "QuestObjectiveTracker", "CampaignQuestObjectiveTracker", "WorldQuestObjectiveTracker",
+    "BonusObjectiveTracker", "AchievementObjectiveTracker", "ProfessionsRecipeTracker",
+    "MonthlyActivitiesObjectiveTracker", "AdventureObjectiveTracker", "InitiativeTasksObjectiveTracker",
+}
 
+-- Coalesced next-frame entry point: schedule the reparent one frame out so it lands after Blizzard's own Init / managed-frame layout / edit-mode restore instead of racing them.
+function Plugin:SuppressBlizzardTracker()
+    if not ObjectiveTrackerFrame then return end
     if InCombatLockdown() then
-        Orbit.CombatManager:QueueUpdate(function() self:CaptureTracker() end)
+        Orbit.CombatManager:QueueUpdate(function() self:SuppressBlizzardTracker() end)
         return
     end
+    if self._suppressScheduled then return end
+    self._suppressScheduled = true
+    C_Timer.After(0, function()
+        self._suppressScheduled = false
+        self:ApplyBlizzardSuppression()
+    end)
+end
 
+-- Detach ObjectiveTrackerFrame from Blizzard's Edit Mode and right-managed layout so neither shows a stray selection box under ours nor re-anchors it away from our box. Idempotent; runs on a clean stack (no protected ops — Edit Mode is OOC-only).
+function Plugin:DetachNativeSystems(tracker)
+    -- Blizzard's own "hidden system" flag: OnEditModeEnter skips HighlightSystem, so the .Selection overlay never anchors/shows.
+    tracker.defaultHideSelection = true
+    if tracker.ClearHighlight and (tracker.isHighlighted or tracker.isSelected) then tracker:ClearHighlight() end
+    -- ManagedFrameMixin re-adds on every OnShow; this flag makes AddManagedFrame early-out. Pull it out now via its own container ref.
+    tracker.ignoreFramePositionManager = true
+    local rc = tracker.layoutParent
+    if rc and rc.RemoveManagedFrame then rc:RemoveManagedFrame(tracker) end
+end
+
+-- Remove the quest modules (no POI buttons → no cache write → no map taint) and reparent the scenario/UIWidget-only container into the top of our box for its native cards + flyouts.
+function Plugin:ApplyBlizzardSuppression()
+    local tracker = ObjectiveTrackerFrame
+    if not tracker or not tracker.RemoveModule then return end
+    if InCombatLockdown() then
+        Orbit.CombatManager:QueueUpdate(function() self:ApplyBlizzardSuppression() end)
+        return
+    end
+    for _, name in ipairs(BLIZZARD_REMOVE) do
+        local m = _G[name]
+        if m then
+            tracker:RemoveModule(m)
+            -- RemoveModule stops future renders but leaves the already-drawn blocks visible; KeepAliveHidden hides the module and re-hides it if Blizzard shows it again.
+            OrbitEngine.NativeFrame:KeepAliveHidden(m)
+        end
+    end
+    self:DetachNativeSystems(tracker)
+    -- Anchor only on the actual reparent; LayoutContent owns positioning thereafter. Re-anchoring here on every (repeated) call fights LayoutContent's section position → flicker on load.
     if tracker:GetParent() ~= self.scrollChild then
-        local parent = tracker:GetParent()
-        -- Only capture from native Blizzard parents
-        if parent ~= UIParent and parent ~= (UIParentRightManagedFrameContainer or UIParent) then
-            return
-        end
         tracker:SetParent(self.scrollChild)
+        tracker:ClearAllPoints()
+        tracker:SetPoint("TOPLEFT", self.scrollChild, "TOPLEFT", 0, 0)
+        tracker:SetPoint("TOPRIGHT", self.scrollChild, "TOPRIGHT", 0, 0)
     end
-
-    tracker:ClearAllPoints()
-    tracker:SetPoint("TOPLEFT", self.scrollChild, "TOPLEFT", 0, 0)
-    tracker:SetPoint("TOPRIGHT", self.scrollChild, "TOPRIGHT", 0, 0)
-
-    -- The tracker is a screen-clamped, LOW-strata UIParentRight-managed frame. Inside a scroll viewport both must be undone: unclamp so it scrolls past the screen edge into the clipped region (instead of sticking at the edge), and match the scroll frame's strata so SetClipsChildren actually clips it — a different-strata child escapes the clip and renders outside the box.
+    tracker:SetFrameLevel(self.scrollChild:GetFrameLevel())
     tracker:SetClampedToScreen(false)
-    tracker:SetFrameStrata(self.scrollFrame:GetFrameStrata())
-
-    -- Suppress Blizzard's native Edit Mode selection (prevents double-highlight)
-    if tracker.Selection then
-        tracker.Selection:SetAlpha(0)
-        tracker.Selection:EnableMouse(false)
+    tracker:EnableMouse(false)
+    if tracker.NineSlice then tracker.NineSlice:Hide() end
+    if tracker.Header then OrbitEngine.NativeFrame:KeepAliveHidden(tracker.Header) end
+    -- Hide the scenario module's own ornate header; we render our own collapsible section header for it in LayoutContent.
+    if ScenarioObjectiveTracker and ScenarioObjectiveTracker.Header then
+        OrbitEngine.NativeFrame:KeepAliveHidden(ScenarioObjectiveTracker.Header)
     end
-
-    -- Protect against re-parenting by Blizzard or other addons
-    OrbitEngine.FrameGuard:Protect(tracker, self.scrollChild)
-    OrbitEngine.FrameGuard:UpdateProtection(tracker, self.scrollChild, function()
-        self:ApplySettings()
-    end, { enforceShow = false })
-
-    -- Override the tracker's height system so modules use our container height
-    if not self._heightOverridden then
-        -- Let Blizzard render every block regardless of visible height; the ScrollFrame supplies the viewport + scrolling.
-        tracker.GetAvailableHeight = function()
-            return C.MAX_TRACKER_HEIGHT
-        end
-
-        -- Wheel over the box or the tracker scrolls the viewport (the ScrollFrame handles direct hovers itself).
-        local function Wheel(_, delta) self:OnScroll(delta) end
-        self.frame:EnableMouseWheel(true)
-        self.frame:SetScript("OnMouseWheel", Wheel)
-        tracker:EnableMouseWheel(true)
-        tracker:SetScript("OnMouseWheel", Wheel)
-
-        -- Real content height = topModulePadding (which spans the master header) + module heights + the moduleSpacing Blizzard inserts between them. Drives both the tracker and the ScrollFrame's scroll child, whose height the engine uses for GetVerticalScrollRange. No re-entrancy — GetAvailableHeight is constant so SetHeight never changes the layout.
-        tracker.UpdateHeight = function(container)
-            local count, sum = 0, 0
-            for _, module in ipairs(container.modules or {}) do
-                local ch = module:GetContentsHeight()
-                if module:IsShown() and ch > 0 then
-                    sum = sum + ch
-                    count = count + 1
-                end
-            end
-            local h
-            if count > 0 then
-                h = (container.topModulePadding or 0) + sum + (container.moduleSpacing or 0) * (count - 1)
-            elseif container.Header and container.Header:IsShown() then
-                h = container.Header:GetHeight()
-            else
-                h = 0
-            end
-            h = math.max(h, C.MIN_TRACKER_HEIGHT)
-            -- Reserve a sliver for the trailing header separator (it hangs just below the last header, landing in the bottom inset on a collapsed last section). Keep it in the box/viewport height ONLY, not the scroll child: the scroll range is driven by scrollChild vs viewport, so baking the sliver into scrollChild inflated the range past true content — phantom scroll + empty space below, which also kept SetClipsChildren(true) on and cut off the left-extending scenario widget flyout. Box carries the sliver so the separator still has room; scrollChild tracks real content so range collapses to 0 whenever content fits. Only the Orbit skin draws separators, so Blizzard style reserves nothing.
-            local boxH = h
-            if self:IsOrbitStyle() and self:GetSetting(SYSTEM_ID, "HeaderSeparators") ~= false then
-                boxH = h + OrbitEngine.Pixel:Multiple(C.HEADER_SEPARATOR_HEIGHT + 1, container:GetEffectiveScale())
-            end
-            container:SetHeight(boxH)
-            if self.scrollChild then self.scrollChild:SetHeight(h) end
-
-            self:RefreshEmptyState()
-            self:ApplyContainerHeight()
-        end
-
-        -- Blizzard calls UpdateHeight only on OnShow, so a relayout (quest added, objective changed) leaves our content height + scroll range stale and the bottom clips unscrollably. Recompute on every relayout; converges in one extra cycle since GetAvailableHeight is constant (no oscillation). UpdateHeight also runs RefreshEmptyState.
-        hooksecurefunc(tracker, "Update", function()
-            if tracker.UpdateHeight then tracker:UpdateHeight() end
-            self:UpdateSeparators()
+    self:HookScenarioFlyouts()
+    if not self._scenarioHooked then
+        self._scenarioHooked = true
+        -- Ignore size changes we cause ourselves while anchoring the block (avoids a resize->refresh->re-anchor rebuild loop).
+        tracker:HookScript("OnSizeChanged", function()
+            if self._inLayout then return end
+            self:ScheduleRefresh()
         end)
-
-        self._heightOverridden = true
+        -- Reclaim the block if Blizzard reparented it out on show, and keep it hidden while our scenario section is collapsed.
+        hooksecurefunc(tracker, "Show", function()
+            if self:RehomeScenarioBlock() then self:ScheduleRefresh() end
+            if self:IsSectionCollapsed("__SCENARIO__") then tracker:Hide() end
+        end)
     end
+end
 
-    self._captured = true
+-- Blizzard's managed/edit-mode anchor pass reclaims ObjectiveTrackerFrame (resets ignoreFramePositionManager and reparents it to the right-managed container). Re-assert our ownership; returns true if it had drifted out of our scroll child.
+function Plugin:RehomeScenarioBlock()
+    local tracker = ObjectiveTrackerFrame
+    if not tracker or InCombatLockdown() then return false end
+    tracker.ignoreFramePositionManager = true
+    local rc = tracker.layoutParent
+    if rc and rc.RemoveManagedFrame then rc:RemoveManagedFrame(tracker) end
+    if tracker:GetParent() ~= self.scrollChild then
+        tracker:SetParent(self.scrollChild)
+        -- Blizzard cleared/replaced its points relative to the managed container; re-anchor to us so it isn't stranded until the relayout runs.
+        tracker:ClearAllPoints()
+        tracker:SetPoint("TOPLEFT", self.scrollChild, "TOPLEFT", 0, 0)
+        tracker:SetPoint("TOPRIGHT", self.scrollChild, "TOPRIGHT", 0, 0)
+        return true
+    end
+    return false
+end
+
+-- The Delve "Challenges" (TieredEntranceTraits) and MawBuffs flyouts open horizontally beyond our box; our vertical scroll clip would cut them off. Drop the clip while one is open, restore on close.
+function Plugin:HookScenarioFlyouts()
+    local so = ScenarioObjectiveTracker
+    if not so then return end
+    local containers = { so.TieredEntranceTraitsBlock, so.MawBuffsBlock }
+    for _, block in ipairs(containers) do
+        local list = block and block.Container and block.Container.List
+        if list and not list._orbitClipHooked then
+            list._orbitClipHooked = true
+            list:HookScript("OnShow", function()
+                self._flyoutOpen = true
+                if self.scrollFrame then self.scrollFrame:SetClipsChildren(false) end
+            end)
+            list:HookScript("OnHide", function()
+                self._flyoutOpen = false
+                self:UpdateScrollClip()
+            end)
+        end
+    end
+end
+
+-- Our scenario section-header title — read from Blizzard's (now hidden) module header text.
+function Plugin:ScenarioTitle()
+    local h = ScenarioObjectiveTracker and ScenarioObjectiveTracker.Header
+    local t = h and h.Text and h.Text:GetText()
+    if t and t ~= "" then return t end
+    return TRACKER_HEADER_SCENARIO or "Scenario"
+end
+
+-- Height the reparented scenario/event block occupies, reserved below our scenario header.
+function Plugin:ScenarioContentHeight()
+    local c = ObjectiveTrackerFrame
+    if not c or not c.modules or c:GetParent() ~= self.scrollChild then return 0 end
+    -- When the StatusWidget orb owns the M+ block, exclude it (M+ IS the only scenario during a key) so we don't reserve a duplicate section; other scenario/widget modules still count.
+    local dropMPlus = self._mplusOwned and ScenarioObjectiveTracker or nil
+    local sum, count = 0, 0
+    for _, m in ipairs(c.modules) do
+        if m ~= dropMPlus then
+            local h = m.GetContentsHeight and m:GetContentsHeight() or 0
+            if h > 0 then sum = sum + h; count = count + 1 end
+        end
+    end
+    if count == 0 then return 0 end
+    return (c.topModulePadding or 0) + sum + (c.moduleSpacing or 0) * (count - 1) + (c.bottomModulePadding or 0)
+end
+
+-- [ REFRESH ]----------------------------------------------------------------------------------------
+-- A plain boolean write — never taints. The clean OnUpdate poller (OnLoad) drains it into FullLayout out of combat.
+function Plugin:ScheduleRefresh()
+    self._refreshPending = true
+end
+
+-- Our frames are all UIParent-descended (insecure), so relayout is combat-safe — progress/collapse update live.
+function Plugin:FullLayout()
+    if not self.frame or not self.scrollChild then return end
+
+    Orbit.ObjectivesSkin:RefreshCache(self)
+    local model = Orbit.ObjectivesModel:BuildModel(self)
+
+    -- scrollChild is widened for flyout overflow, so derive the content width from the frame and inset content back by padX.
+    local inset = self:GetContentInset()
+    local width = self.frame:GetWidth() - 2 * inset
+    if width <= 1 then
+        width = (self:GetSetting(SYSTEM_ID, "Width") or C.DEFAULT_WIDTH) - 2 * inset
+    end
+    local padX = C.HORIZONTAL_OVERFLOW + inset
+    local scenarioH = self:ScenarioContentHeight()
+
+    -- Skip the expensive layout half when nothing that affects the render changed (the common case at 10Hz — quest events fire constantly with identical results). Settings/theme changes set _forceRelayout.
+    local fp = self:ComputeFingerprint(model, width, scenarioH)
+    if fp == self._lastFingerprint and not self._forceRelayout then return end
+    self._lastFingerprint, self._forceRelayout = fp, false
+
+    -- Drop the stale item overlay OOC (its row is about to be recycled); re-hover re-attaches. Can't detach in combat (protected).
+    if not InCombatLockdown() then self:DetachItemButton() end
+
+    local totalH = self:LayoutContent(model, width, scenarioH, padX)
+    self.scrollChild:SetHeight(math.max(totalH, C.MIN_TRACKER_HEIGHT))
+    self._sectionCount = #model.sections
+    self._hasContent = #model.sections > 0 or scenarioH > 0
+    self:UpdateScrollClip()
+    self:RefreshEmptyState()
+    self:ApplyContainerHeight()
 end
 
 -- [ SCROLL ]-----------------------------------------------------------------------------------------
--- The ScrollFrame derives its range from scroll-child height vs viewport height; we just step within it.
+-- Derive the range from scroll-child vs viewport, NOT GetVerticalScrollRange (it balloons); clip only on real overflow.
+function Plugin:UpdateScrollClip()
+    local sf = self.scrollFrame
+    if not sf or not self.scrollChild then return end
+    -- A scenario flyout is open past our edge — never clip while it shows (HookScenarioFlyouts restores on close).
+    if self._flyoutOpen then sf:SetClipsChildren(false); return end
+    local range = math.max(0, self.scrollChild:GetHeight() - sf:GetHeight())
+    sf:SetClipsChildren(range > 0)
+    if sf:GetVerticalScroll() > range then sf:SetVerticalScroll(range) end
+end
+
 function Plugin:OnScroll(delta)
     local sf = self.scrollFrame
-    if not sf then return end
-    local range = sf:GetVerticalScrollRange()
+    if not sf or not self.scrollChild then return end
+    local range = math.max(0, self.scrollChild:GetHeight() - sf:GetHeight())
     if range <= 0 then return end
     local v = sf:GetVerticalScroll() - delta * C.SCROLL_SPEED
     if v < 0 then v = 0 elseif v > range then v = range end
     sf:SetVerticalScroll(v)
 end
 
+-- [ COLLAPSE STATE ]---------------------------------------------------------------------------------
+-- Persistent per-section collapse (AccountSettings) plus a transient, never-saved combat overlay for AutoCollapseCombat.
+function Plugin:GetSavedCollapse(key)
+    local state = Orbit.db and Orbit.db.AccountSettings and Orbit.db.AccountSettings.ObjectivesCollapseState
+    return (state and state[key]) or false
+end
+
+function Plugin:IsSectionCollapsed(key)
+    if self._combatCollapsed and self._combatCollapsed[key] then return true end
+    return self:GetSavedCollapse(key)
+end
+
+function Plugin:SetSectionCollapsed(key, collapsed)
+    if not Orbit.db or not Orbit.db.AccountSettings then return end
+    local state = Orbit.db.AccountSettings.ObjectivesCollapseState
+    if not state then state = {}; Orbit.db.AccountSettings.ObjectivesCollapseState = state end
+    state[key] = collapsed or nil
+end
+
 -- [ APPLY SETTINGS ]---------------------------------------------------------------------------------
 function Plugin:ApplySettings()
     local frame = self.frame
     if not frame then return end
-
     if InCombatLockdown() then
         Orbit.CombatManager:QueueUpdate(function() self:ApplySettings() end)
         return
     end
 
-    -- Skin hooks gate on the style mode: Orbit applies the custom skin, Blizzard leaves native chrome.
-    self:SetSkinEnabled(self:IsOrbitStyle())
-
-    self:CaptureTracker()
+    -- Re-assert (idempotent): Blizzard's ObjectiveTrackerManager assigns its modules at PLAYER_ENTERING_WORLD, which can land after our first suppress.
+    self:SuppressBlizzardTracker()
 
     local scale = self:GetSetting(SYSTEM_ID, "Scale") or C.DEFAULT_SCALE
     local width = self:GetSetting(SYSTEM_ID, "Width") or C.DEFAULT_WIDTH
@@ -311,13 +438,10 @@ function Plugin:ApplySettings()
     frame:SetScale(scale / 100)
     frame:Show()
 
-    -- Border must be applied before width/anchors so borderPixelSize is available for inset calc
+    -- Border first so borderPixelSize is available for the inset calc.
     self:ApplyBorder()
-
-    -- Background backdrop
     self:ApplyBackdrop()
 
-    -- Apply size and re-anchor tracker inside border. When width-synced to an anchor parent, the anchor engine owns our width.
     local s = frame:GetEffectiveScale()
     local snappedHeight = OrbitEngine.Pixel:Snap(height, s)
     if IsWidthSynced(frame) then
@@ -325,79 +449,42 @@ function Plugin:ApplySettings()
     else
         frame:SetSize(OrbitEngine.Pixel:Snap(width, s), snappedHeight)
     end
-    local containerWidth = frame:GetWidth()
 
-    -- ScrollFrame fills the box interior (inset for border + content padding); the scroll child matches its width so only vertical scrolling occurs.
+    -- Viewport insets vertically (scroll clips top/bottom) but extends past the frame left/right so scenario/delve flyouts opening outward aren't clipped; FullLayout insets the content back via padX.
     local inset = self:GetContentInset()
-    local innerWidth = containerWidth - (inset * 2)
+    local ov = C.HORIZONTAL_OVERFLOW
     self.scrollFrame:ClearAllPoints()
-    self.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", inset, -inset)
-    self.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -inset, inset)
-    self.scrollChild:SetWidth(innerWidth)
+    self.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", -ov, -inset)
+    self.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", ov, inset)
 
-    if ObjectiveTrackerFrame then
-        -- Blizzard style hangs each block's POI button ~7px left of the module edge (blockOffsetX 20 − 7 anchor − 20 POI width), which the ScrollFrame clips. Shift the native content right so the icons clear the clip; the header backgrounds compensate back to full width (FitNativeHeaderBackground). Orbit style repositions the POI itself, so no pad.
-        local leftPad = self:IsOrbitStyle() and 0 or C.BLIZZARD_LEFT_PAD
-        ObjectiveTrackerFrame:ClearAllPoints()
-        ObjectiveTrackerFrame:SetPoint("TOPLEFT", self.scrollChild, "TOPLEFT", leftPad, 0)
-        ObjectiveTrackerFrame:SetPoint("TOPRIGHT", self.scrollChild, "TOPRIGHT", 0, 0)
-    end
+    Orbit.ObjectivesSkin:RefreshCache(self)
 
-    -- Re-apply skins with current settings
-    self:ApplySkins()
-
-    -- Restore collapse state (always persist), then size the box to it (collapsed = tight bar)
-    self:RestoreCollapseState()
-    self:ApplyContainerHeight()
-
-    -- Full Visibility Engine integration (opacity, oocFade, mouseOver reveal, showWithTarget, hideMounted) — supersedes ApplyMouseOver; keyed off the VE entry registered in Plugins/VisibilityManifest.lua.
     if Orbit.OOCFadeMixin then Orbit.OOCFadeMixin:ApplyOOCFade(frame, self, SYSTEM_ID) end
-
-    -- Zone filter + area world-quest tracker manage the watch list off their own events; this reconciles their enabled states (idempotent).
     self:UpdateZoneFilters()
 
-    -- Hide all chrome when nothing is tracked (border/backdrop were just applied per settings)
-    self._isEmpty = self:IsTrackerEmpty()
-    if self._isEmpty then self:ApplyEmptyVisibility(true) end
-end
-
--- [ RE-ASSERT LAYOUT ]-------------------------------------------------------------------------------
--- Re-apply the saved position + full layout — what Edit Mode exit effectively does — after a spec change displaces the reparented tracker. RestorePosition fixes the container; ApplySettings re-anchors the managed tracker (a bare RestorePosition, which is all the shared spec-restore does, would not). SetPoint on the container — parent of the managed tracker — is protected, so defer out of combat.
-function Plugin:ReassertLayout()
-    if not self.frame then return end
-    if InCombatLockdown() then
-        Orbit.CombatManager:QueueUpdate(function() self:ReassertLayout() end)
-        return
-    end
-    OrbitEngine.Frame:RestorePosition(self.frame, self, SYSTEM_ID)
-    self:ApplySettings()
+    self:ApplyContainerHeight()
+    -- Settings/theme/geometry changed — force the next layout past the content-fingerprint early-out.
+    self._forceRelayout = true
+    self:ScheduleRefresh()
 end
 
 -- [ CONTAINER HEIGHT ]-------------------------------------------------------------------------------
--- Box height for the collapsed master bar: header with symmetric top/bottom inset (the separator is hidden while collapsed, so there's no divider to hug).
-function Plugin:CollapsedBarHeight()
-    local tracker = ObjectiveTrackerFrame
-    local barH = (tracker and tracker.Header and tracker.Header:GetHeight()) or C.MIN_TRACKER_HEIGHT
-    return barH + 2 * self:GetContentInset()
-end
-
--- Uncapped box height that wraps the content with symmetric top/bottom inset. The trailing header's separator is hidden (UpdateSeparators) when content ends on a collapsed header, so there's no divider to hug — the box pads evenly top and bottom.
+-- Uncapped box height that wraps the rendered content with symmetric top/bottom inset.
 function Plugin:DesiredContentHeight()
     local heightSetting = self:GetSetting(SYSTEM_ID, "Height") or C.DEFAULT_HEIGHT
-    local tracker = ObjectiveTrackerFrame
-    if not tracker then return heightSetting end
-    if tracker.IsCollapsed and tracker:IsCollapsed() then return self:CollapsedBarHeight() end
-    return tracker:GetHeight() + 2 * self:GetContentInset()
+    local content = (self.scrollChild and self.scrollChild:GetHeight()) or 0
+    if content <= 0 then return heightSetting end
+    return content + 2 * self:GetContentInset()
 end
 
--- Box content-fits, capped at the Height setting — position-independent (no screen-relative cap: that made the box height depend on where on screen it sat). The ScrollFrame scrolls anything beyond. Edit mode = full Height (grabbable; the resize handle drives the real setting).
+-- Box content-fits, capped at the Height setting; the ScrollFrame scrolls anything beyond. Edit Mode = full Height (grabbable).
 function Plugin:ResolveContainerHeight()
     local heightSetting = self:GetSetting(SYSTEM_ID, "Height") or C.DEFAULT_HEIGHT
     if Orbit:IsEditMode() then return heightSetting end
     return math.min(heightSetting, self:DesiredContentHeight())
 end
 
--- A stale saved position can restore a centered anchor (RestorePosition applies the stored point verbatim); re-pin to the forced TOP point — preserving the current spot — so SetHeight holds the top instead of growing about the centre.
+-- A stale saved position can restore a centered anchor; re-pin to the forced TOP point so SetHeight holds the top.
 function Plugin:HoldTopAnchor()
     local frame = self.frame
     local forced = frame.orbitForceAnchorPoint
@@ -418,22 +505,47 @@ function Plugin:ApplyContainerHeight()
     frame:SetHeight(OrbitEngine.Pixel:Snap(self:ResolveContainerHeight(), frame:GetEffectiveScale()))
 end
 
+-- Edit Mode toggle: reclaim the scenario block (Blizzard's exit anchor pass reparents it out of our frame), resize the box, and let the poll re-position it. Never a full ApplySettings — that visibly re-renders the block.
+function Plugin:OnEditModeToggle()
+    self:RehomeScenarioBlock()
+    -- Re-anchor the (possibly reclaimed) block THIS frame, not via the 0.1s poll, so it never renders at Blizzard's native slot. EditMode.Exit is a clean OOC stack, so a direct FullLayout is safe here. _forceRelayout bypasses the fingerprint early-out; FullLayout also re-runs height + empty-state.
+    self._forceRelayout = true
+    self._refreshPending = false
+    self:FullLayout()
+end
+
+-- Mount/dismount, pet battle, and vehicle toggles must NOT run the base PluginMixin path (a full ApplySettings that re-renders the reparented Blizzard tracker block — flicker). Alpha is owned by OOCFade; hard-hide for those cases, otherwise just re-assert fade.
+function Plugin:UpdateVisibility()
+    local frame = self.frame
+    if not frame then return end
+    if not Orbit:IsPluginEnabled(self.name) then frame:Hide(); return end
+    local mountedHidden = Orbit.VisibilityEngine and Orbit.VisibilityEngine:IsFrameMountedHidden(self.name, frame.systemIndex or SYSTEM_ID)
+    if (C_PetBattles and C_PetBattles.IsInBattle()) or (UnitHasVehicleUI and UnitHasVehicleUI("player")) or mountedHidden then
+        frame:SetAlpha(0)
+        return
+    end
+    frame:Show()
+    if Orbit.OOCFadeMixin then
+        Orbit.OOCFadeMixin:ApplyOOCFade(frame, self, SYSTEM_ID)
+    else
+        frame:SetAlpha((self:GetSetting(SYSTEM_ID, "Opacity") or C.OPACITY_DEFAULT) / 100)
+    end
+end
+
 -- [ BORDER ]-----------------------------------------------------------------------------------------
 function Plugin:ApplyBorder()
     local frame = self.frame
     local showBorder = self:GetSetting(SYSTEM_ID, "ShowBorder")
-    if showBorder == false then
+    -- Nothing tracked → never render a border, regardless of caller (ApplySettings re-applies unconditionally).
+    if showBorder == false or self:IsTrackerEmpty() then
         if Orbit.Skin.ClearNineSliceBorder then Orbit.Skin:ClearNineSliceBorder(frame) end
         if frame._borderFrame then frame._borderFrame:Hide() end
+        if frame._edgeBorderOverlay then frame._edgeBorderOverlay:Hide() end
         return
     end
-
-    local gs = Orbit.db and Orbit.db.GlobalSettings
-    local borderSize = gs and gs.BorderSize or 1
-    Orbit.Skin:SkinBorder(frame, frame, borderSize)
+    Orbit.Skin:SkinBorder(frame, frame, Orbit:GetTheme("BorderSize") or 1)
 end
 
--- [ CONTENT INSET ]----------------------------------------------------------------------------------
 function Plugin:GetContentInset()
     local showBorder = self:GetSetting(SYSTEM_ID, "ShowBorder")
     local borderInset = 0
@@ -447,13 +559,12 @@ end
 function Plugin:ApplyBackdrop()
     local frame = self.frame
     local opacity = (self:GetSetting(SYSTEM_ID, "BackgroundOpacity") or C.BG_OPACITY_DEFAULT) / 100
-
     if not frame._backdrop then
         frame._backdrop = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
         frame._backdrop:SetAllPoints(frame)
     end
-
-    if opacity > 0 then
+    -- Nothing tracked → never render the backdrop, regardless of caller.
+    if opacity > 0 and not self:IsTrackerEmpty() then
         local bgColor = Orbit.Skin:GetBackgroundColor()
         frame._backdrop:SetColorTexture(bgColor.r, bgColor.g, bgColor.b, opacity)
         frame._backdrop:Show()
@@ -463,20 +574,9 @@ function Plugin:ApplyBackdrop()
 end
 
 -- [ EMPTY STATE ]------------------------------------------------------------------------------------
--- Hide chrome when nothing is tracked; restore per settings when content returns.
 function Plugin:IsTrackerEmpty()
     if Orbit:IsEditMode() then return false end
-    local tracker = ObjectiveTrackerFrame
-    if not tracker or not tracker.modules then return true end
-    -- When collapsed, Blizzard hides every module (IsShown false) but contentsHeight stays positive — so don't gate on IsShown, or a collapsed-but-populated tracker reads as empty and loses its chrome.
-    local collapsed = tracker.IsCollapsed and tracker:IsCollapsed()
-    for _, module in ipairs(tracker.modules) do
-        local ch = module.contentsHeight
-        if ch and ch > 0 and (collapsed or module:IsShown()) then
-            return false
-        end
-    end
-    return true
+    return not self._hasContent
 end
 
 function Plugin:ApplyEmptyVisibility(empty)
@@ -499,156 +599,8 @@ function Plugin:RefreshEmptyState()
     self:ApplyEmptyVisibility(empty)
 end
 
--- The master separator divides it from the modules below — hide it only while the master itself is collapsed (genuinely nothing below it). Module separators always show per the setting, so a collapsed sub-header keeps its divider and reads consistently with the master. Colours persist from ApplySkins; this only toggles visibility. Runs on every relayout + at the end of ApplySkins.
-function Plugin:UpdateSeparators()
-    local tracker = ObjectiveTrackerFrame
-    if not tracker then return end
-    local sepOn = self:GetSetting(SYSTEM_ID, "HeaderSeparators") ~= false
-
-    local masterSep = tracker.Header and tracker.Header._orbitSeparator
-    if masterSep then
-        masterSep:SetShown(sepOn and not (tracker.IsCollapsed and tracker:IsCollapsed()))
-    end
-
-    for _, m in ipairs(tracker.modules or {}) do
-        local sep = m.Header and m.Header._orbitSeparator
-        if sep then sep:SetShown(sepOn) end
-    end
-end
-
--- [ COLLAPSE PERSISTENCE ]---------------------------------------------------------------------------
-function Plugin:SaveCollapseState()
-    -- Combat auto-collapse is transient view state — keep it out of the saved layout, else a reload/disconnect mid-combat persists "collapsed" as the user's preference.
-    if self._combatCollapsing then return end
-    if not Orbit.db or not Orbit.db.AccountSettings then return end
-    local state = {}
-
-    -- Main tracker collapse
-    if ObjectiveTrackerFrame then
-        state._main = ObjectiveTrackerFrame.isCollapsed or false
-    end
-
-    -- Per-module collapse
-    for _, moduleName in pairs(C.TRACKER_MODULES) do
-        local tracker = _G[moduleName]
-        if tracker then
-            state[moduleName] = tracker.isCollapsed or false
-        end
-    end
-
-    Orbit.db.AccountSettings.ObjectivesCollapseState = state
-end
-
-function Plugin:RestoreCollapseState()
-    local state = Orbit.db and Orbit.db.AccountSettings and Orbit.db.AccountSettings.ObjectivesCollapseState
-    if not state then return end
-
-    -- Main tracker
-    if ObjectiveTrackerFrame and state._main and ObjectiveTrackerFrame.SetCollapsed then
-        if ObjectiveTrackerFrame.isCollapsed ~= state._main then
-            ObjectiveTrackerFrame:SetCollapsed(state._main)
-        end
-    end
-
-    -- Per-module
-    for _, moduleName in pairs(C.TRACKER_MODULES) do
-        local tracker = _G[moduleName]
-        if tracker and state[moduleName] ~= nil and tracker.SetCollapsed then
-            if tracker.isCollapsed ~= state[moduleName] then
-                tracker:SetCollapsed(state[moduleName])
-            end
-        end
-    end
-end
-
--- [ COLLAPSE TOGGLE ]--------------------------------------------------------------------------------
--- Instant collapse/expand for a module or the master container — no animation. Toggle, settle Blizzard's layout synchronously (dirty primed so SetCollapsed's MarkDirty doesn't queue a deferred relayout), then resize the box. The transient _orbitAnimating flag suppresses Blizzard's header shine for this toggle (see the PlayAddAnimation hook).
-function Plugin:ToggleCollapse(target)
-    if not target or not target.ToggleCollapsed then return end
-    PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
-    target._orbitAnimating = true
-    ObjectiveTrackerFrame.dirty = true
-    target:ToggleCollapsed()
-    ObjectiveTrackerFrame:Update(true)
-    ObjectiveTrackerFrame.dirty = nil
-    target._orbitAnimating = nil
-    if ObjectiveTrackerFrame.UpdateHeight then ObjectiveTrackerFrame:UpdateHeight() end
-end
-
-function Plugin:InstallCollapseHooks()
-    if self._collapseHooksInstalled then return end
-
-    -- Hook the main tracker header collapse
-    if ObjectiveTrackerFrame and ObjectiveTrackerFrame.Header and ObjectiveTrackerFrame.Header.SetCollapsed then
-        hooksecurefunc(ObjectiveTrackerFrame.Header, "SetCollapsed", function()
-            self:SaveCollapseState()
-            self:RefreshEmptyState()
-            self:ApplyContainerHeight()
-        end)
-    end
-
-    -- Hook per-module collapse via their headers
-    for _, moduleName in pairs(C.TRACKER_MODULES) do
-        local module = _G[moduleName]
-        if module and module.Header and module.Header.SetCollapsed then
-            hooksecurefunc(module.Header, "SetCollapsed", function()
-                self:SaveCollapseState()
-            end)
-            -- Suppress Blizzard's header shine while a toggle owns this module (or the master); _orbitAnimating is set transiently by ToggleCollapse.
-            if module.Header.PlayAddAnimation then
-                hooksecurefunc(module.Header, "PlayAddAnimation", function(header)
-                    if (module._orbitAnimating or ObjectiveTrackerFrame._orbitAnimating) and header.AddAnim then
-                        header.AddAnim:Stop()
-                    end
-                end)
-            end
-        end
-    end
-
-    self._collapseHooksInstalled = true
-end
-
--- [ AUTO-COLLAPSE IN COMBAT ]------------------------------------------------------------------------
-function Plugin:InstallCombatCollapseHooks()
-    if self._combatCollapseInstalled then return end
-
-    local eventFrame = CreateFrame("Frame")
-    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    eventFrame:SetScript("OnEvent", function(_, event)
-        if event == "PLAYER_REGEN_DISABLED" then
-            if not self:GetSetting(SYSTEM_ID, "AutoCollapseCombat") then return end
-            -- Collapse only quest-type modules (Quests, World Quests, Achievements) — scenarios/events/bonus objectives stay visible in combat. Remember which we collapsed so we restore only those.
-            self._combatCollapsed = {}
-            for _, name in ipairs(C.COMBAT_COLLAPSE_MODULES) do
-                local m = _G[name]
-                if m and m.SetCollapsed and not m.isCollapsed then
-                    self._combatCollapsing = true
-                    m:SetCollapsed(true)
-                    self._combatCollapsing = nil
-                    self._combatCollapsed[#self._combatCollapsed + 1] = name
-                end
-            end
-        elseif event == "PLAYER_REGEN_ENABLED" then
-            -- Always undo the combat auto-collapse (even if the setting was toggled off mid-combat); _combatCollapsing keeps this transient toggle out of the saved layout.
-            if self._combatCollapsed then
-                for _, name in ipairs(self._combatCollapsed) do
-                    local m = _G[name]
-                    if m and m.SetCollapsed then
-                        self._combatCollapsing = true
-                        m:SetCollapsed(false)
-                        self._combatCollapsing = nil
-                    end
-                end
-                self._combatCollapsed = nil
-            end
-        end
-    end)
-
-    self._combatCollapseInstalled = true
-end
-
 -- [ BLIZZARD HIDER ]---------------------------------------------------------------------------------
+-- Runs only when the plugin is DISABLED but the user toggled the Blizzard tracker hidden in the VE; when enabled we park it in OnLoad instead.
 Orbit:RegisterBlizzardHider("Objectives", function()
     if ObjectiveTrackerFrame then OrbitEngine.NativeFrame:SecureHide(ObjectiveTrackerFrame) end
 end)
