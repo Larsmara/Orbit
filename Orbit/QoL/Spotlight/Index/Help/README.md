@@ -1,7 +1,7 @@
 # Help
 
 ## Description
-The `help` Spotlight kind: a curated catalog of Orbit actions and hidden-interaction explainers, surfaced only when a query leads with `help` or `orbit` (`prefixOnly` — it never appears in normal item/spell search).
+The `help` Spotlight kind: a curated catalog of Orbit actions and hidden-interaction explainers, surfaced both by their own words (typing `reset` finds the reset actions) and under the `help`/`orbit` category prefix.
 
 ## Purpose
 In-client discoverability for Orbit features that have no visible affordance — reset menus, tool actions, and explainers for non-obvious interactions — without building a dedicated help window.

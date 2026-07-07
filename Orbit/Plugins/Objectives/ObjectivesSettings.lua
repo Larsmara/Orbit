@@ -136,6 +136,20 @@ function Plugin:AddSettings(dialog, systemFrame)
         })
 
     elseif currentTab == L.PLU_OBJ_TAB_BEHAVIOUR then
+        table.insert(schema.controls, {
+            type = "dropdown",
+            key = "SortMode",
+            label = L.PLU_OBJ_SORT,
+            default = C.SORT_DEFAULT,
+            options = {
+                { text = L.PLU_OBJ_SORT_TRACKED, value = "tracked" },
+                { text = L.PLU_OBJ_SORT_PROXIMITY, value = "proximity" },
+                { text = L.PLU_OBJ_SORT_PROGRESS, value = "progress" },
+                { text = NAME, value = "name" },
+            },
+            onChange = OnChange(self, systemIndex, "SortMode"),
+        })
+
         local progressTooltip = { { title = L.CFG_FORMAT_TOOLTIP_TITLE } }
         for _, token in ipairs(C.PROGRESS_TOKENS) do
             table.insert(progressTooltip, { key = token.key, value = token.sample })
@@ -166,6 +180,15 @@ function Plugin:AddSettings(dialog, systemFrame)
             label = L.PLU_OBJ_AUTO_COLLAPSE_COMBAT,
             default = false,
             onChange = OnChange(self, systemIndex, "AutoCollapseCombat"),
+        })
+
+        table.insert(schema.controls, {
+            type = "checkbox",
+            key = "SmoothScroll",
+            label = L.PLU_OBJ_SMOOTH_SCROLL,
+            tooltip = L.PLU_OBJ_SMOOTH_SCROLL_TT,
+            default = true,
+            onChange = OnChange(self, systemIndex, "SmoothScroll"),
         })
 
         table.insert(schema.controls, {

@@ -24,8 +24,8 @@ Spotlight.Kinds = {
     { kind = "currencies",  settingKey = "Currencies",  labelKey = "PLU_SPT_SRC_CURRENCIES" },
     { kind = "macros",      settingKey = "Macros",      labelKey = "PLU_SPT_SRC_MACROS" },
     { kind = "questitems",  settingKey = "QuestItems",  labelKey = "PLU_SPT_SRC_QUESTITEMS" },
-    -- Help is authored content, not live game data: gated behind its "help"/"orbit" prefix (prefixOnly).
-    { kind = "help",        settingKey = "Help",        labelKey = "PLU_SPT_SRC_HELP", aliasTokens = { "orbit" }, prefixOnly = true },
+    -- Help is authored content; searchable by its own words ("reset", "flush") as well as the "help"/"orbit" prefix.
+    { kind = "help",        settingKey = "Help",        labelKey = "PLU_SPT_SRC_HELP", aliasTokens = { "orbit" } },
 }
 
 -- [ BINDING GLOBALS ]--------------------------------------------------------------------------------

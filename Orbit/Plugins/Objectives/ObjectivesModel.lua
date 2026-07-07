@@ -58,7 +58,42 @@ function Model:GetObjectives(questID, isWorldQuest)
     return objs or EMPTY
 end
 
+-- Completion fraction (0..1) for the progress sort. Objective/progress data is non-secret, so the math is safe.
+local function ProgressFraction(e)
+    if e.progress and e.progress.max and e.progress.max > 0 then return e.progress.cur / e.progress.max end
+    local objs = e.objectives
+    if objs and #objs > 0 then
+        local done = 0
+        for _, o in ipairs(objs) do if o.finished then done = done + 1 end end
+        return done / #objs
+    end
+    return e.isComplete and 1 or 0
+end
+
+-- Re-order a section's entries in place. Keys are precomputed onto each entry (rebuilt every pass, so never stale); title breaks ties for a deterministic order under Lua's unstable sort.
+local function SortEntries(list, mode)
+    if mode == "name" then
+        table.sort(list, function(a, b) return (a.title or "") < (b.title or "") end)
+    elseif mode == "progress" then
+        for _, e in ipairs(list) do e._sortKey = ProgressFraction(e) end
+        table.sort(list, function(a, b)
+            if a._sortKey ~= b._sortKey then return a._sortKey > b._sortKey end
+            return (a.title or "") < (b.title or "")
+        end)
+    elseif mode == "proximity" then
+        for _, e in ipairs(list) do
+            local d = e.questID and C_QuestLog.GetDistanceSqToQuest(e.questID)
+            e._sortKey = d or math.huge
+        end
+        table.sort(list, function(a, b)
+            if a._sortKey ~= b._sortKey then return a._sortKey < b._sortKey end
+            return (a.title or "") < (b.title or "")
+        end)
+    end
+end
+
 function Model:BuildModel(plugin)
+    local sortMode = plugin:GetSetting(C.SYSTEM_ID, "SortMode") or C.SORT_DEFAULT
     local ctx = { superID = C_SuperTrack.GetSuperTrackedQuestID() }
     local byCat = {}
     for _, fn in ipairs(self.providers) do
@@ -83,6 +118,7 @@ function Model:BuildModel(plugin)
         local list = byCat[sec.key]
         if list and #list > 0 then
             local collapsed = plugin:IsSectionCollapsed(sec.key)
+            if not collapsed and sortMode ~= "tracked" then SortEntries(list, sortMode) end
             sections[#sections + 1] = {
                 key = sec.key,
                 title = sec.title or _G[sec.titleGlobal] or sec.titleGlobal,

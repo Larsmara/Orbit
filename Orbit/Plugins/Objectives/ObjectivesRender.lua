@@ -57,8 +57,8 @@ local function EnsureRowWidgets(row)
     row.iconHit = CreateFrame("Button", nil, row)
     row.iconHit:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
     row.iconHit:SetSize(C.POI_SIZE, C.POI_SIZE)
-    row.iconHit:RegisterForClicks("LeftButtonUp")
-    row.iconHit:SetScript("OnClick", function() Plugin:OnIconClick(row) end)
+    row.iconHit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row.iconHit:SetScript("OnClick", function(_, button) Plugin:OnIconClick(row, button) end)
     row.iconHit:SetScript("OnEnter", function() Plugin:OnIconEnter(row) end)
     row.iconHit:SetScript("OnLeave", function() Plugin:OnIconLeave(row) end)
     row.iconHit:EnableMouseWheel(true)
@@ -347,11 +347,49 @@ function Plugin:ComputeFingerprint(model, width, scenarioH)
     return table.concat(p, "\1", 1, n)
 end
 
+-- Per-section placement record consumed by the sticky pinned header. Reuses record tables across passes (_spanCount is the live length; the array tail may hold stale entries).
+local function RecordSpan(plugin, section, yTop, headerH, showCount)
+    local spans = plugin._sectionSpans
+    if not spans then spans = {}; plugin._sectionSpans = spans end
+    local n = plugin._spanCount + 1
+    plugin._spanCount = n
+    local rec = spans[n]
+    if not rec then rec = {}; spans[n] = rec end
+    rec.section, rec.yTop, rec.headerH, rec.showCount = section, yTop, headerH, showCount
+end
+
+-- Snap targets: the content-y that should sit at the divider for each quest (row top minus the header→row gap), so scrolling hops quest-to-quest with the un-scrolled-top spacing, never chopping one. The parallel _snapKeys carries each snap's entry key so the scroll can be identity-anchored across relayouts (content above the fold changing must not shift what the user reads). Ascending; the tail may hold stale entries past _snapCount.
+local function RecordSnap(plugin, snapY, key)
+    local n = plugin._snapCount + 1
+    plugin._snapCount = n
+    local snaps = plugin._snapPoints
+    if not snaps then snaps = {}; plugin._snapPoints = snaps end
+    local keys = plugin._snapKeys
+    if not keys then keys = {}; plugin._snapKeys = keys end
+    snaps[n], keys[n] = snapY, key
+end
+
+-- One entry's snaps: the gap-aligned row top, plus interior "page" snaps every pageStep for content taller than the viewport (a fat achievement / the scenario block) so its interior isn't skipped in a single hop.
+local function RecordSnaps(plugin, topY, height, key, pageStep, gap)
+    RecordSnap(plugin, topY - gap, key)
+    local off = pageStep
+    while off < height - 4 do
+        RecordSnap(plugin, topY + off, key)
+        off = off + pageStep
+    end
+end
+
 function Plugin:LayoutContent(model, width, scenarioH, padX)
     padX = padX or 0
     self:EnsurePools()
     self._rowPool:ReleaseAll()
     self._headerPool:ReleaseAll()
+
+    -- Publish the header spans + content width for the sticky pinned header, and mark it stale so it repopulates once this pass (title/count may have changed under an unchanged active key).
+    self._spanCount = 0
+    self._snapCount = 0
+    self._contentWidth = width
+    self._stickyDirty = true
 
     -- Light animation diff: fade in keys not seen last pass, flash keys whose progress signature changed. First pass never animates (avoids a login-time mass fade).
     local prevKeys, prevProgress, prevSig = self._prevKeys, self._lastProgress, self._lastSig
@@ -364,7 +402,10 @@ function Plugin:LayoutContent(model, width, scenarioH, padX)
     local sp = cache.spacing
     local y = 0
     local bottomIsBar = false
+    local bottomIsHeader = false
     local scale = self.scrollChild:GetEffectiveScale()
+    -- Interior snap stride for over-tall content; _boxH is last pass's viewport (fallback to the Height cap on the first layout).
+    local pageStep = math.max(60, (self._boxH or (self:GetSetting(SYSTEM_ID, "Height") or C.DEFAULT_HEIGHT)) * 0.85)
 
     -- Our own collapsible section header for Blizzard's reparented scenario/event block. The block is pulled up under the header (shift = Blizzard's own hidden module header + top padding) so the first card starts right below it — no gap.
     local block = ObjectiveTrackerFrame
@@ -379,11 +420,15 @@ function Plugin:LayoutContent(model, width, scenarioH, padX)
         header:ClearAllPoints()
         header:SetPoint("TOPLEFT", self.scrollChild, "TOPLEFT", padX, -Pixel:Snap(y, scale))
         header:Show()
+        RecordSpan(self, desc, y, hH, false)
         y = y + hH
         if collapsed then
             block:Hide()
+            bottomIsHeader = true
         else
+            bottomIsHeader = false
             y = y + sp.sectionHeader
+            local blockTop = y
             local sh = ScenarioObjectiveTracker and ScenarioObjectiveTracker.Header
             local shift = (block.topModulePadding or 0) + (sh and sh:GetHeight() or 0)
             -- Guard our own resize from re-arming a refresh via the block's OnSizeChanged hook.
@@ -395,6 +440,7 @@ function Plugin:LayoutContent(model, width, scenarioH, padX)
             block:Show()
             self._inLayout = false
             y = y + math.max(0, scenarioH - shift)
+            RecordSnaps(self, blockTop, y - blockTop, "__SCENARIO__", pageStep, sp.sectionHeader)
         end
     end
 
@@ -405,8 +451,10 @@ function Plugin:LayoutContent(model, width, scenarioH, padX)
         header:ClearAllPoints()
         header:SetPoint("TOPLEFT", self.scrollChild, "TOPLEFT", padX, -Pixel:Snap(y, scale))
         header:Show()
+        RecordSpan(self, section, y, hH, showCount)
         y = y + hH
         bottomIsBar = false
+        bottomIsHeader = true
         if not section.collapsed then
             for ei, entry in ipairs(section.entries) do
                 y = y + (ei == 1 and sp.sectionHeader or sp.row)
@@ -425,12 +473,65 @@ function Plugin:LayoutContent(model, width, scenarioH, padX)
                 row:ClearAllPoints()
                 row:SetPoint("TOPLEFT", self.scrollChild, "TOPLEFT", padX, -Pixel:Snap(y, scale))
                 row:Show()
+                -- Snap so the row lands the header→row gap below the divider (matches the un-scrolled top spacing); interior page snaps for a row taller than the viewport.
+                RecordSnaps(self, y, rH, key, pageStep, sp.sectionHeader)
                 y = y + rH
                 bottomIsBar = entry.progress ~= nil
+                bottomIsHeader = false
             end
         end
     end
 
     self._prevKeys, self._lastProgress, self._lastSig = newKeys, newProgress, newSig
-    return y + (bottomIsBar and C.PROGRESS_BAR_BOTTOM_PAD or 0)
+    -- Pad below the last element for its overhanging art: a header's separator, or a progress bar's border.
+    return y + (bottomIsHeader and C.HEADER_BOTTOM_PAD or (bottomIsBar and C.PROGRESS_BAR_BOTTOM_PAD or 0))
+end
+
+-- [ STICKY HEADER ]----------------------------------------------------------------------------------
+-- A single pinned header mirrored from the topmost visible section. Lives in self.stickyHost (a content-rect clip frame above the scroll child) so it never scrolls; reuses the pooled-header widgets + collapse handler.
+function Plugin:EnsureStickyOverlay()
+    if self._stickyOverlay then return self._stickyOverlay end
+    local host = self.stickyHost
+    if not host then return nil end
+    local overlay = CreateFrame("Button", nil, host)
+    overlay:SetFrameLevel(host:GetFrameLevel() + 1)
+    -- No own background: the clip guarantees nothing renders behind the bar, and the frame's shared backdrop already covers this zone — an overlay fill would just double-darken it. The pin renders exactly like an inline header (text + divider only).
+    EnsureHeaderWidgets(overlay)
+    overlay:Hide()
+    self._stickyOverlay = overlay
+    return overlay
+end
+
+function Plugin:PopulateStickyOverlay(span)
+    local overlay = self._stickyOverlay
+    PopulateHeader(overlay, span.section, self._contentWidth or overlay:GetWidth(), span.showCount, cache.sepOn)
+end
+
+-- Shows the active section's header in a fixed zone at the top. The scroll model (UpdateScrollClip) reserves that zone and offsets the content by one header height, so the pinned section's inline header always clips above the divider (no duplicate) and its rows abut the divider (no gap) — the transparent bar has nothing rendering behind it. Active = last span whose yTop is at/above the logical scroll; the next header rises in-flow and takes over as an instant swap.
+function Plugin:UpdateStickyHeader()
+    local overlay = self:EnsureStickyOverlay()
+    if not overlay then return end
+    local count = self._spanCount or 0
+    if not self._stickyActive or self._flyoutOpen or count == 0 then
+        overlay:Hide()
+        return
+    end
+    local spans = self._sectionSpans
+    local u = self._logicalScroll or 0
+    local active = 1
+    for i = 1, count do
+        if spans[i].yTop <= u then active = i else break end
+    end
+    local span = spans[active]
+    local key = span.section.key
+    if self._stickyDirty or self._stickyKey ~= key then
+        self._stickyDirty = false
+        self._stickyKey = key
+        self:PopulateStickyOverlay(span)
+    end
+    overlay:ClearAllPoints()
+    overlay:SetPoint("TOPLEFT", self.stickyHost, "TOPLEFT", 0, 0)
+    overlay:SetPoint("TOPRIGHT", self.stickyHost, "TOPRIGHT", 0, 0)
+    overlay:SetHeight(span.headerH)
+    overlay:Show()
 end

@@ -25,6 +25,9 @@ local NINE_SLICE_PIECES = {
     "TopEdge", "BottomEdge", "LeftEdge", "RightEdge",
 }
 local ID_COLOR = { 0.6, 0.8, 1 }
+local MOUNT_COLOR = { 1, 1, 1 }
+local ILVL_COLOR = { 1, 0.82, 0 }
+local GUILD_COLOR = { 0.25, 1, 0.25 }
 local TARGET_SELF_COLOR = { 1, 0.5, 0.5 }
 local TARGET_NPC_COLOR = { 0.8, 0.8, 0.8 }
 local ALLIANCE_COLOR = { r = 0.2, g = 0.45, b = 0.95 }
@@ -160,7 +163,8 @@ local function MergeHealthBar(tt, bar, bgColor, tint)
     Skin:UpdateRoundedMask(mb)
 end
 
-local function ApplyOrbitSkin(tt)
+-- unitOverride lets the config preview (no live SetUnit) still resolve allegiance tint from a chosen unit.
+local function ApplyOrbitSkin(tt, unitOverride)
     if IsSecretTooltip(tt) then return end
     if not tt._orbitBg then
         local bg = tt:CreateTexture(nil, "BACKGROUND")
@@ -168,12 +172,14 @@ local function ApplyOrbitSkin(tt)
         tt._orbitBg = bg
         Skin:RegisterMaskedSurface(tt, bg)
     end
-    local c = Skin:GetBackgroundColor()
+    local base = Skin:GetBackgroundColor()
+    local d = Get("TooltipDarken", 0)
+    local c = { r = base.r * (1 - d), g = base.g * (1 - d), b = base.b * (1 - d), a = base.a }
     tt._orbitBg:SetColorTexture(c.r, c.g, c.b, c.a or 1)
     tt._orbitBg:Show()
     if tt.NineSlice then tt.NineSlice:Hide() end
     local _, unit = tt:GetUnit()
-    local tint = AllegianceTint(unit)
+    local tint = AllegianceTint(unitOverride or unit)
     local bar = tt.StatusBar
     if bar and bar:IsShown() and not Get("TooltipHideHealthBar", true) then
         MergeHealthBar(tt, bar, c, tint)
@@ -193,16 +199,97 @@ local function RemoveOrbitSkin(tt)
 end
 
 -- [ FEATURES ]---------------------------------------------------------------------------------------
--- Guild is tooltip line 2 for guilded players.
-local function AppendGuildRank(self, unit)
+-- Guild is tooltip line 2 for guilded players; colour it green (matching the config preview) and append rank when enabled.
+local function StyleGuildLine(self, unit)
     if not UnitIsPlayer(unit) then return end
     local gname, grank = GetGuildInfo(unit)
-    if not gname or not grank or not canaccessvalue(gname) or not canaccessvalue(grank) then return end
+    if not gname or not canaccessvalue(gname) then return end
     local line = self.TextLeft2
     local text = line and line:GetText()
-    if text and canaccessvalue(text) and text:find(gname, 1, true) then
+    if not text or not canaccessvalue(text) or not text:find(gname, 1, true) then return end
+    if Get("TooltipGuildRank", true) and grank and canaccessvalue(grank) then
         line:SetText(text .. " - " .. grank)
     end
+    line:SetTextColor(GUILD_COLOR[1], GUILD_COLOR[2], GUILD_COLOR[3])
+end
+
+-- Mount reads scan the unit's buffs for a mount aura; OOC-gated by the caller so the 12.1 secret aura path is never hit.
+local function AppendMount(self, unit, before)
+    local mountName
+    AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(aura)
+        local spellID = aura and aura.spellId
+        if spellID and canaccessvalue(spellID) then
+            local mountID = C_MountJournal.GetMountFromSpell(spellID)
+            if mountID then
+                mountName = C_MountJournal.GetMountInfoByID(mountID)
+                return true
+            end
+        end
+    end, true)
+    if mountName then
+        before()
+        self:AddLine(L.PLU_TIP_MOUNT_F:format(mountName), MOUNT_COLOR[1], MOUNT_COLOR[2], MOUNT_COLOR[3])
+    end
+end
+
+-- Inspect is async and range/rate-limited, so item level lands one INSPECT_READY later; cache per-GUID keeps re-hovers instant.
+local ilvlCache = {}
+local pendingGUID, pendingUnit
+
+-- White label + gold value on one line: base colour is white, the number carries its own colour escape.
+local function ShowIlvl(self, ilvl, before)
+    before()
+    local value = ("|cff%02x%02x%02x%d|r"):format(ILVL_COLOR[1] * 255, ILVL_COLOR[2] * 255, ILVL_COLOR[3] * 255, ilvl)
+    self:AddLine(L.PLU_TIP_ILVL_F:format(value), 1, 1, 1)
+end
+
+local function AppendIlvl(self, unit, before)
+    if not UnitIsPlayer(unit) then return end
+    if UnitIsUnit(unit, "player") then
+        local _, equipped = GetAverageItemLevel()
+        ShowIlvl(self, math.floor((equipped or 0) + 0.5), before)
+        return
+    end
+    local guid = UnitGUID(unit)
+    if not guid or not canaccessvalue(guid) then return end
+    local cached = ilvlCache[guid]
+    if cached then ShowIlvl(self, cached, before); return end
+    if CanInspect(unit) then
+        pendingGUID, pendingUnit = guid, unit
+        NotifyInspect(unit)
+    end
+end
+
+-- Inspect landed after the tooltip built, so re-drive SetUnit (a safe secure delegate) to rebuild with the cache hit — an AddLine now would append below other addons instead of under the identity block. Cache is set first so the rebuild's AppendIlvl short-circuits and doesn't re-inspect.
+local function OnInspectReady(guid)
+    if not Tooltips._enabled or guid ~= pendingGUID then return end
+    local unit = pendingUnit
+    pendingGUID, pendingUnit = nil, nil
+    ClearInspectPlayer()
+    if not unit or UnitGUID(unit) ~= guid then return end
+    local ilvl = C_PaperDollInfo.GetInspectItemLevel(unit)
+    if not ilvl or ilvl == 0 then return end
+    ilvlCache[guid] = math.floor(ilvl + 0.5)
+    if GameTooltip:IsShown() and not IsSecretTooltip(GameTooltip) then
+        local _, ttUnit = GameTooltip:GetUnit()
+        if ttUnit and UnitGUID(ttUnit) == guid then GameTooltip:SetUnit(ttUnit) end
+    end
+end
+
+-- Registered at file load (before third-party addons like Raider.IO), so these lines append while the tooltip still holds only Blizzard's base block — landing directly under the identity lines rather than below other addons' content. OOC-only keeps mount/ilvl off the 12.1 secret path.
+local function OnUnitIdentity(self)
+    if not Tooltips._enabled or not MANAGED_SET[self] then return end
+    if IsSecretTooltip(self) then return end
+    if UnitAffectingCombat("player") then return end
+    local _, unit = self:GetUnit()
+    if not unit or not canaccessvalue(unit) then return end
+    -- One blank line separates these from the identity block; added lazily so a still-loading ilvl doesn't leave a stray spacer.
+    local spaced = false
+    local function spacer()
+        if not spaced then self:AddLine(" "); spaced = true end
+    end
+    if Get("TooltipShowIlvl", false) then AppendIlvl(self, unit, spacer) end
+    if Get("TooltipShowMount", false) then AppendMount(self, unit, spacer) end
 end
 
 -- Post-call runs insecure; unit reads are secret in combat, hence the canaccessvalue guards.
@@ -229,9 +316,7 @@ local function OnUnitTooltip(self)
         if t then SetBorderColor(self, t.r, t.g, t.b) end
     end
 
-    if Get("TooltipGuildRank", true) then
-        AppendGuildRank(self, unit)
-    end
+    StyleGuildLine(self, unit)
 
     if Get("TooltipShowTarget", false) then
         local target = unit .. "target"
@@ -274,6 +359,7 @@ function Tooltips:ApplyScale()
         local f = _G[name]
         if f and f.SetScale then f:SetScale(scale) end
     end
+    self:RefreshPreview()
 end
 
 function Tooltips:ApplyStyle()
@@ -281,6 +367,109 @@ function Tooltips:ApplyStyle()
     for _, tt in ipairs(MANAGED) do
         if orbit then ApplyOrbitSkin(tt) else RemoveOrbitSkin(tt) end
     end
+    self:RefreshPreview()
+end
+
+-- [ CONFIG PREVIEW ]---------------------------------------------------------------------------------
+-- A standalone GameTooltip driven from the live player + current settings so the config panel shows the actual result. Not in MANAGED, so the global post-calls skip it — lines are built here instead.
+local PREVIEW_GAP = 16
+
+local function AppendMountPreview(tt, spacer)
+    local mounted
+    AppendMount(tt, "player", function() spacer(); mounted = true end)
+    if mounted then return end
+    -- Not mounted: illustrate with the first collected mount (real, localized name — no hardcoded string).
+    local ids = C_MountJournal and C_MountJournal.GetMountIDs and C_MountJournal.GetMountIDs()
+    for _, id in ipairs(ids or {}) do
+        local mname, _, _, _, _, _, _, _, _, _, collected = C_MountJournal.GetMountInfoByID(id)
+        if collected and mname then
+            spacer()
+            tt:AddLine(L.PLU_TIP_MOUNT_F:format(mname), MOUNT_COLOR[1], MOUNT_COLOR[2], MOUNT_COLOR[3])
+            return
+        end
+    end
+end
+
+local function BuildPreviewLines(tt)
+    local classFile = UnitClassBase("player")
+    local cc = classFile and ClassColor(classFile)
+    tt:AddLine(UnitName("player") or PLAYER, cc and cc.r or 1, cc and cc.g or 1, cc and cc.b or 1)
+
+    local gname, grank = GetGuildInfo("player")
+    if gname then
+        if Get("TooltipGuildRank", true) and grank then gname = gname .. " - " .. grank end
+        tt:AddLine(gname, GUILD_COLOR[1], GUILD_COLOR[2], GUILD_COLOR[3])
+    end
+    tt:AddLine(("%s %d %s (%s)"):format(LEVEL, UnitLevel("player"), UnitRace("player") or "", PLAYER), 1, 1, 1)
+    tt:AddLine(UnitClass("player") or "", 1, 1, 1)
+    tt:AddLine(UnitFactionGroup("player") == "Horde" and FACTION_HORDE or FACTION_ALLIANCE, 1, 1, 1)
+
+    local spaced = false
+    local function spacer() if not spaced then tt:AddLine(" "); spaced = true end end
+    if Get("TooltipShowIlvl", false) then AppendIlvl(tt, "player", spacer) end
+    if Get("TooltipShowMount", false) then AppendMountPreview(tt, spacer) end
+    if Get("TooltipShowTarget", false) then
+        tt:AddLine(" ")
+        tt:AddLine(TARGET .. ": " .. (UnitExists("target") and UnitName("target") or (UnitName("player") or PLAYER)),
+            TARGET_NPC_COLOR[1], TARGET_NPC_COLOR[2], TARGET_NPC_COLOR[3])
+    end
+end
+
+-- Canonical custom-tooltip order: own (clears lines) → point → lines → show → skin. Showing an empty tooltip first would auto-hide it.
+local function RenderPreview(tt, anchor)
+    tt:SetOwner(anchor, "ANCHOR_NONE")
+    tt:ClearAllPoints()
+    tt:SetPoint("LEFT", anchor, "RIGHT", PREVIEW_GAP, 0)
+    BuildPreviewLines(tt)
+    if not Get("TooltipHideInstruction", true) then
+        tt:AddLine(L.PLU_TIP_PREVIEW_HINT, 0, 1, 0)
+    end
+    -- Static sample bar (unit-health OnUpdate neutered — the preview has no unit) so the Hide Health Bar toggle is visible.
+    local bar = tt.StatusBar
+    if Get("TooltipHideHealthBar", true) then
+        bar:Hide()
+    else
+        bar:SetScript("OnUpdate", nil)
+        bar:SetMinMaxValues(0, 1)
+        bar:SetValue(0.72)
+        bar:SetStatusBarColor(0.2, 0.75, 0.2)
+        bar:Show()
+    end
+    tt:SetScale(Get("TooltipScale", 1.0))
+    tt:Show()
+    if IsOrbitStyle() then
+        ApplyOrbitSkin(tt, "player")
+    else
+        RemoveOrbitSkin(tt)
+        local tint = AllegianceTint("player")
+        SetBorderColor(tt, tint and tint.r or 1, tint and tint.g or 1, tint and tint.b or 1)
+    end
+end
+
+function Tooltips:RefreshPreview()
+    if not self._previewActive or not self._preview then return end
+    RenderPreview(self._preview, self._previewAnchor)
+end
+
+function Tooltips:ShowPreview(anchorFrame)
+    if not anchorFrame then return end
+    self._previewActive = true
+    self._previewAnchor = anchorFrame
+    if not self._preview then
+        local tt = CreateFrame("GameTooltip", "OrbitTooltipPreview", anchorFrame, "GameTooltipTemplate")
+        tt:SetFrameStrata("TOOLTIP")
+        tt:SetClampedToScreen(true)
+        -- The template's data mixin clears manually-added lines on data-refresh events; unregister so our content persists.
+        tt:UnregisterAllEvents()
+        self._preview = tt
+    end
+    self._preview:SetParent(anchorFrame)
+    RenderPreview(self._preview, anchorFrame)
+end
+
+function Tooltips:HidePreview()
+    self._previewActive = false
+    if self._preview then self._preview:Hide() end
 end
 
 -- [ HOOKS ]------------------------------------------------------------------------------------------
@@ -290,6 +479,10 @@ function Tooltips:Install()
 
     -- WorldFrame is protected; EnableMouseMotion is blocked mid-combat (an in-combat /reload runs Install in lockdown), so defer past combat.
     Orbit.CombatManager:QueueUpdate(function() WorldFrame:EnableMouseMotion(true) end)
+
+    local inspect = CreateFrame("Frame")
+    inspect:RegisterEvent("INSPECT_READY")
+    inspect:SetScript("OnEvent", function(_, _, guid) OnInspectReady(guid) end)
 
     -- hooksecurefunc runs in the caller's context, so re-owning stays secure when Blizzard drives the tooltip.
     hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
@@ -346,6 +539,11 @@ function Tooltips:Disable()
     self._enabled = false
     self:ApplyScale()
     self:ApplyStyle()
+end
+
+-- Register the identity enrichment at file load — running before third-party tooltip addons is what places its lines under the identity block. Guarded by _enabled, so it's inert until Enable().
+if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, OnUnitIdentity)
 end
 
 -- [ AUTO-ENABLE ON LOGIN ]---------------------------------------------------------------------------

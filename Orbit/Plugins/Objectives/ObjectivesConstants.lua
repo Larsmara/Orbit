@@ -41,12 +41,14 @@ Orbit.ObjectivesConstants = {
     PROGRESS_BAR_SIDE_PADDING = 30,
     PROGRESS_BAR_LEFT_EXTRA = 10,
     BAR_BG_ALPHA = 0.85,
-    SCROLL_SPEED = 60,
-    MIN_TRACKER_HEIGHT = 50,
+    -- Scrolling snaps to quest boundaries (one wheel tick = one quest) and eases there; higher = snappier. The ease runs a self-terminating OnUpdate only while animating.
+    SCROLL_ANIM_SPEED = 14,
     -- Horizontal slack on the scroll viewport so scenario/delve flyouts opening past our edge aren't clipped (the ScrollFrame clips vertically to scroll, but this widens its rect so it never clips left/right).
     HORIZONTAL_OVERFLOW = 260,
     -- Breathing room added below the content ONLY when the bottom-most entry is a progress bar (its skinned border would otherwise sit flush against the frame's bottom border). Text-ending content hugs tight so the backdrop/border don't gain dead space.
     PROGRESS_BAR_BOTTOM_PAD = 6,
+    -- When the bottom-most element is a header (a collapsed last section), its separator is drawn ~thickness BELOW the header, past the content height — this pad keeps it inside the content-fit box so it isn't clipped.
+    HEADER_BOTTOM_PAD = 4,
     HIGHLIGHT_BRIGHTEN = 1.3,
     POI_SIZE = 18,
 
@@ -75,6 +77,12 @@ Orbit.ObjectivesConstants = {
 
     -- The RegisterUpdate driver coalesces ScheduleRefresh() boolean writes into one FullLayout per this interval, always on a taint-free stack.
     REFRESH_POLL_INTERVAL = 0.1,
+
+    -- Quest sort order within each section. "tracked" preserves the watch-list order (no sort); the rest re-sort our own model (taint-safe — we own the render). Proximity re-reads distance on a ticker so it stays live as you move.
+    SORT_DEFAULT = "tracked",
+    SORT_PROXIMITY_INTERVAL = 2.0,
+
+    WOWHEAD_QUEST_URL = "https://www.wowhead.com/quest=%d",
 
     -- Light entry animations (Blizzard AnimationGroups + StatusBar interpolation; no manual OnUpdate).
     FADE_IN_DURATION    = 0.25,

@@ -46,16 +46,6 @@ local function EnsureCategoryTokens()
     return categoryTokens
 end
 
-local prefixOnlyKinds
-local function EnsurePrefixOnly()
-    if prefixOnlyKinds then return prefixOnlyKinds end
-    prefixOnlyKinds = {}
-    for _, k in ipairs(Orbit.Spotlight.Kinds) do
-        if k.prefixOnly then prefixOnlyKinds[k.kind] = true end
-    end
-    return prefixOnlyKinds
-end
-
 -- LCP match on category labels — tolerates plurals/short typos; ambiguous ties fall through to name search.
 local CATEGORY_MIN_PREFIX = 3
 
@@ -188,11 +178,9 @@ function Matcher:Query(entries, query, enabledKinds, maxResults, fuzzy, hidePass
         local queryWords = {}
         for w in effectiveQuery:gmatch("%S+") do queryWords[#queryWords + 1] = w end
         if #queryWords == 0 then return {} end
-        local po = EnsurePrefixOnly()
         for i = 1, #entries do
             local entry = entries[i]
-            -- prefixOnly kinds (help) never surface in an un-prefixed search — only when their own token leads.
-            local passKind = kindFilter and (entry.kind == kindFilter) or (not kindFilter and enabledKinds[entry.kind] and not po[entry.kind])
+            local passKind = kindFilter and (entry.kind == kindFilter) or (not kindFilter and enabledKinds[entry.kind])
             if passKind and enabledKinds[entry.kind] and not (hidePassives and entry.passive) then
                 -- Every word must hit (AND semantics); sum scores so strong matches on multiple words rank higher.
                 local score = 0

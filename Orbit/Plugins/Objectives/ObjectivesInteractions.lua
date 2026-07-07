@@ -4,8 +4,33 @@
 local Orbit = Orbit
 local C = Orbit.ObjectivesConstants
 local Skin = Orbit.ObjectivesSkin
+local L = Orbit.L
 
 local Plugin = Orbit:GetPlugin("Objectives")
+
+-- Addons can't touch the OS clipboard; this read-only popup pre-selects the URL so the user can Ctrl+C. data = the URL.
+StaticPopupDialogs["ORBIT_OBJECTIVES_COPY_URL"] = {
+    text = L.PLU_OBJ_COPY_WOWHEAD,
+    button1 = CLOSE,
+    hasEditBox = true,
+    editBoxWidth = 260,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    OnShow = function(dialog)
+        local eb = dialog.EditBox or dialog.editBox
+        if not eb then return end
+        eb:SetText(dialog.data or "")
+        eb:HighlightText()
+        eb:SetFocus()
+    end,
+    EditBoxOnTextChanged = function(editBox)
+        local url = editBox:GetParent().data
+        if url and editBox:GetText() ~= url then editBox:SetText(url); editBox:HighlightText() end
+    end,
+    EditBoxOnEnterPressed = function(editBox) editBox:GetParent():Hide() end,
+    EditBoxOnEscapePressed = function(editBox) editBox:GetParent():Hide() end,
+}
 
 -- [ SECURE QUEST-ITEM OVERLAY ]----------------------------------------------------------------------
 -- One invisible SecureActionButton (type=item) parented to UIParent and anchored (never reparented) over the hovered row's item hit-frame, OOC only. Anchoring — not parenting — keeps rows insecure so they can relayout in combat; row.itemIcon draws the visible icon.
@@ -96,23 +121,79 @@ function Plugin:DismissEntry(entry)
     end
 end
 
--- [ CLICK ]------------------------------------------------------------------------------------------
--- Title/body: shift-left dismisses, plain-left opens the quest in the map/log (combat-gated). Right does nothing.
-function Plugin:OnRowClick(row, button)
-    local entry = row.entry
-    if not entry or button ~= "LeftButton" then return end
-    if IsShiftKeyDown() then
-        self:DismissEntry(entry)
-    elseif entry.questID and not InCombatLockdown() and QuestMapFrame_OpenToQuestDetails then
-        QuestMapFrame_OpenToQuestDetails(entry.questID)
+-- [ WAYPOINT ]---------------------------------------------------------------------------------------
+-- Drop a map waypoint on the quest's next objective and navigate to it. Every API is AllowedWhenUntainted (combat-safe). Falls back to super-tracking the quest when it has no map waypoint (account/meta quests).
+function Plugin:SetQuestWaypoint(entry)
+    local qid = entry.questID
+    if not qid then return end
+    local mapID, x, y = C_QuestLog.GetNextWaypoint(qid)
+    if mapID and x and y then
+        C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(mapID, x, y))
+        C_SuperTrack.SetSuperTrackedUserWaypoint(true)
+    else
+        C_SuperTrack.SetSuperTrackedQuestID(qid)
     end
 end
 
--- Icon: plain-left focuses (super-tracks) the quest, shift-left dismisses.
-function Plugin:OnIconClick(row)
+function Plugin:ShowWowheadLink(questID)
+    if not questID then return end
+    StaticPopup_Show("ORBIT_OBJECTIVES_COPY_URL", nil, nil, C.WOWHEAD_QUEST_URL:format(questID))
+end
+
+-- [ CONTEXT MENU ]-----------------------------------------------------------------------------------
+-- Right-click menu built on the modern MenuUtil system, mirroring Blizzard's native quest-tracker menu and reusing its localized globals. Quest-only actions guard on questID; Stop Tracking works for every trackable via DismissEntry.
+function Plugin:ShowContextMenu(row)
     local entry = row.entry
     if not entry then return end
-    if IsShiftKeyDown() then
+    MenuUtil.CreateContextMenu(row, function(_, root)
+        root:CreateTitle(entry.title or "")
+        local qid = entry.questID
+        if qid then
+            if C_SuperTrack.GetSuperTrackedQuestID() == qid then
+                root:CreateButton(STOP_SUPER_TRACK_QUEST, function() C_SuperTrack.SetSuperTrackedQuestID(0) end)
+            else
+                root:CreateButton(SUPER_TRACK_QUEST, function() C_SuperTrack.SetSuperTrackedQuestID(qid) end)
+            end
+            root:CreateButton(OBJECTIVES_SHOW_QUEST_MAP, function()
+                if not InCombatLockdown() and QuestMapFrame_OpenToQuestDetails then QuestMapFrame_OpenToQuestDetails(qid) end
+            end)
+            if C_QuestLog.IsPushableQuest(qid) and IsInGroup() then
+                root:CreateButton(SHARE_QUEST, function() QuestUtil.ShareQuest(qid) end)
+            end
+            root:CreateButton(L.PLU_OBJ_COPY_WOWHEAD, function() self:ShowWowheadLink(qid) end)
+        end
+        root:CreateButton(OBJECTIVES_STOP_TRACKING, function() self:DismissEntry(entry) end)
+        if qid then
+            root:CreateButton(ABANDON_QUEST_ABBREV, function()
+                if not InCombatLockdown() and QuestMapQuestOptions_AbandonQuest then QuestMapQuestOptions_AbandonQuest(qid) end
+            end)
+        end
+    end)
+end
+
+-- [ CLICK ]------------------------------------------------------------------------------------------
+-- Title/body: right-click opens the context menu, shift-left dismisses, plain-left waypoints the quest's next objective.
+function Plugin:OnRowClick(row, button)
+    local entry = row.entry
+    if not entry then return end
+    if button == "RightButton" then
+        self:ShowContextMenu(row)
+    elseif button == "LeftButton" then
+        if IsShiftKeyDown() then
+            self:DismissEntry(entry)
+        else
+            self:SetQuestWaypoint(entry)
+        end
+    end
+end
+
+-- Icon: plain-left focuses (super-tracks) the quest, shift-left dismisses, right-click opens the context menu.
+function Plugin:OnIconClick(row, button)
+    local entry = row.entry
+    if not entry then return end
+    if button == "RightButton" then
+        self:ShowContextMenu(row)
+    elseif IsShiftKeyDown() then
         self:DismissEntry(entry)
     elseif entry.questID then
         if C_SuperTrack.GetSuperTrackedQuestID() == entry.questID then

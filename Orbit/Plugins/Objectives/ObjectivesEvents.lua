@@ -64,6 +64,10 @@ function Plugin:InstallEventHandlers()
         if event == "QUEST_TURNED_IN" or event == "QUEST_REMOVED" then
             if arg1 then Model:OnQuestGone(arg1) end
             self:ScheduleRefresh()
+        elseif event == "SUPER_TRACKING_CHANGED" then
+            -- Flag the next relayout to scroll the newly-focused quest into view.
+            self._scrollToSuper = true
+            self:ScheduleRefresh()
         elseif event == "PLAYER_REGEN_DISABLED" then
             self:SetCombatCollapse(true)
         elseif event == "PLAYER_REGEN_ENABLED" then

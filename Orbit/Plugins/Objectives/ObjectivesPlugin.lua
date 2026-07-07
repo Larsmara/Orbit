@@ -16,6 +16,8 @@ local Plugin = Orbit:RegisterPlugin("Objectives", SYSTEM_ID, {
         ShowBorder = false,
         BackgroundOpacity = C.BG_OPACITY_DEFAULT,
         AutoCollapseCombat = false,
+        SortMode = C.SORT_DEFAULT,
+        SmoothScroll = true,
         ZoneFilter = false,
         ZoneWorldQuests = false,
         ShowQuestCount = true,
@@ -33,6 +35,8 @@ local Plugin = Orbit:RegisterPlugin("Objectives", SYSTEM_ID, {
 })
 
 _G.BINDING_NAME_ORBIT_OBJECTIVES_TOGGLE = Orbit.L.PLU_OBJ_BINDING_TOGGLE
+_G.BINDING_NAME_ORBIT_OBJECTIVES_SCROLL_UP = Orbit.L.PLU_OBJ_BINDING_SCROLL_UP
+_G.BINDING_NAME_ORBIT_OBJECTIVES_SCROLL_DOWN = Orbit.L.PLU_OBJ_BINDING_SCROLL_DOWN
 
 Mixin(Plugin, Orbit.NativeBarMixin)
 
@@ -120,6 +124,13 @@ function Plugin:OnLoad()
     self.scrollChild:SetSize(C.DEFAULT_WIDTH, C.DEFAULT_HEIGHT)
     self.scrollFrame:SetScrollChild(self.scrollChild)
     self.scrollFrame:SetScript("OnSizeChanged", function(_, w) self.scrollChild:SetWidth(w) end)
+
+    -- Sticky pinned-header host: a content-rect clip frame layered ABOVE the scroll child (and the reparented scenario block, which sits at the child's frame level) so the mirrored header never scrolls. Mouse-transparent — only its overlay button intercepts clicks.
+    self.stickyHost = CreateFrame("Frame", nil, self.frame)
+    self.stickyHost:SetClipsChildren(true)
+    self.stickyHost:EnableMouse(false)
+    self.stickyHost:SetFrameLevel(self.scrollChild:GetFrameLevel() + 20)
+    self:AnchorStickyHost()
 
     self.frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", C.DEFAULT_ANCHOR_X, C.DEFAULT_ANCHOR_Y)
 
@@ -367,38 +378,193 @@ function Plugin:FullLayout()
     if fp == self._lastFingerprint and not self._forceRelayout then return end
     self._lastFingerprint, self._forceRelayout = fp, false
 
+    -- Snapshot which quest sits at the divider before LayoutContent rebuilds every position, so UpdateScrollClip can restore the same quest afterward.
+    self:CaptureScrollAnchor()
+
     -- Drop the stale item overlay OOC (its row is about to be recycled); re-hover re-attaches. Can't detach in combat (protected).
     if not InCombatLockdown() then self:DetachItemButton() end
 
     local totalH = self:LayoutContent(model, width, scenarioH, padX)
-    self.scrollChild:SetHeight(math.max(totalH, C.MIN_TRACKER_HEIGHT))
+    -- Content-fit to the ACTUAL content (1px guard against a degenerate zero-height child); a 50px floor here padded a lone collapsed header into empty space below its divider.
+    self.scrollChild:SetHeight(math.max(totalH, 1))
     self._sectionCount = #model.sections
     self._hasContent = #model.sections > 0 or scenarioH > 0
-    self:UpdateScrollClip()
     self:RefreshEmptyState()
     self:ApplyContainerHeight()
+    -- Last: the sticky/scroll model reads the just-resized frame height to decide overflow + the reserved header zone.
+    self:UpdateScrollClip()
+    -- After the relayout a super-track change forced, ease the focused quest into view.
+    if self._scrollToSuper then
+        self._scrollToSuper = false
+        self:ScrollToSuperTracked()
+    end
+end
+
+-- [ SCROLL ANCHOR ]----------------------------------------------------------------------------------
+-- Identity anchoring: capture which quest is at the divider (its snap key + pixel remainder) before a relayout rebuilds positions, restore it after — so a change above the fold (turn-in, accept, re-sort) never shifts what the user is reading.
+function Plugin:AnchorOf(logicalPos)
+    local n = self._snapCount or 0
+    local keys = self._snapKeys
+    if n == 0 or not keys then return nil end
+    local dividerY = logicalPos + (self._headerH or 0)
+    local idx = 1
+    for i = 1, n do
+        if self._snapPoints[i] <= dividerY then idx = i else break end
+    end
+    return { key = keys[idx], remainder = dividerY - self._snapPoints[idx] }
+end
+
+function Plugin:ResolveAnchor(anchor, headerH)
+    if not anchor then return nil end
+    local n, keys = self._snapCount or 0, self._snapKeys
+    for i = 1, n do
+        if keys[i] == anchor.key then return self._snapPoints[i] + anchor.remainder - headerH end
+    end
+    return nil
+end
+
+function Plugin:CaptureScrollAnchor()
+    if not self._stickyActive then self._viewAnchor, self._targetAnchor = nil, nil; return end
+    self._viewAnchor = self:AnchorOf(self._logicalScroll or 0)
+    self._targetAnchor = self:AnchorOf(self._scrollTarget or self._logicalScroll or 0)
 end
 
 -- [ SCROLL ]-----------------------------------------------------------------------------------------
--- Derive the range from scroll-child vs viewport, NOT GetVerticalScrollRange (it balloons); clip only on real overflow.
+-- The sticky scroll model. When content overflows, reserve a header-height zone at the top (inset the viewport there so content clips at the divider) and render at effective scroll = logicalScroll + headerH, so the active section's inline header always clips above the divider and its rows abut it — the transparent pinned bar has nothing behind it. Off in Edit Mode (positioning, full height) and when content fits.
 function Plugin:UpdateScrollClip()
     local sf = self.scrollFrame
     if not sf or not self.scrollChild then return end
-    -- A scenario flyout is open past our edge — never clip while it shows (HookScenarioFlyouts restores on close).
-    if self._flyoutOpen then sf:SetClipsChildren(false); return end
-    local range = math.max(0, self.scrollChild:GetHeight() - sf:GetHeight())
-    sf:SetClipsChildren(range > 0)
-    if sf:GetVerticalScroll() > range then sf:SetVerticalScroll(range) end
+    -- A scenario flyout is open past our edge — never clip while it shows (HookScenarioFlyouts restores on close). The sticky overlay hides in this state too.
+    if self._flyoutOpen then sf:SetClipsChildren(false); self:UpdateStickyHeader(); return end
+
+    local frame = self.frame
+    local inset = self:GetContentInset()
+    local boxH = frame:GetHeight() - 2 * inset
+    self._boxH = boxH
+    local contentH = self.scrollChild:GetHeight()
+    local spanCount = self._spanCount or 0
+    local headerH = (spanCount > 0 and self._sectionSpans[1].headerH) or 0
+    local sticky = not Orbit:IsEditMode() and self._hasContent and headerH > 0 and spanCount > 0 and contentH > boxH
+    self._stickyActive = sticky
+    self._headerH = headerH
+
+    local ov = C.HORIZONTAL_OVERFLOW
+    sf:ClearAllPoints()
+    sf:SetPoint("TOPLEFT", frame, "TOPLEFT", -ov, -(inset + (sticky and headerH or 0)))
+    sf:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", ov, inset)
+
+    if sticky then
+        local uMax = math.max(0, contentH - boxH)
+        self._uMax = uMax
+        -- Restore the captured quest to the divider (identity anchor); a missing key (quest gone) leaves the raw offset.
+        local nv = self:ResolveAnchor(self._viewAnchor, headerH)
+        if nv then self._logicalScroll = nv end
+        local nt = self:ResolveAnchor(self._targetAnchor, headerH)
+        if nt then self._scrollTarget = nt end
+        self._viewAnchor, self._targetAnchor = nil, nil
+        local u = self._logicalScroll or 0
+        if u < 0 then u = 0 elseif u > uMax then u = uMax end
+        self._logicalScroll = u
+        local t = self._scrollTarget or u
+        if t < 0 then t = 0 elseif t > uMax then t = uMax end
+        self._scrollTarget = t
+        sf:SetClipsChildren(true)
+        -- Pixel-snap the settled write so the whole child isn't left sub-pixel-offset (blurred text); in-flight ease frames stay fractional for smoothness.
+        sf:SetVerticalScroll(OrbitEngine.Pixel:Snap(u + headerH, self.scrollChild:GetEffectiveScale()))
+    else
+        self._uMax = 0
+        self._logicalScroll = 0
+        self._scrollTarget = 0
+        if self._scrollAnimFrame then self._scrollAnimFrame:Hide() end
+        sf:SetClipsChildren(contentH > boxH)
+        sf:SetVerticalScroll(0)
+    end
+    -- Tail: reads the fresh spans + clamped logical scroll, so the pin never shows a stale section for a tick.
+    self:UpdateStickyHeader()
+end
+
+-- Snap the scroll TARGET to the next/previous quest boundary (delta<0 = wheel down = later quests); past the last/first snap it lands on the bottom/top. Snap points are content-y row tops, so the logical target = rowTop - headerH.
+function Plugin:NextSnap(from, delta)
+    local snaps = self._snapPoints
+    local n = self._snapCount or 0
+    local headerH = self._headerH or 0
+    local uMax = self._uMax or 0
+    if n == 0 then return (delta < 0) and uMax or 0 end
+    if delta < 0 then
+        for i = 1, n do
+            local s = snaps[i] - headerH
+            if s > from + 0.5 and s <= uMax then return s end
+        end
+        return uMax
+    end
+    for i = n, 1, -1 do
+        local s = snaps[i] - headerH
+        if s < from - 0.5 and s >= 0 then return s end
+    end
+    return 0
+end
+
+-- Eases the live logical scroll toward the snapped target; exponential (frame-rate independent) so it stays smooth and self-terminates when it arrives. Retargets mid-flight when the user keeps scrolling.
+function Plugin:ScrollAnimStep(elapsed)
+    if not self._stickyActive or self._reduceMotion then self._scrollAnimFrame:Hide(); return end
+    local cur = self._logicalScroll or 0
+    local target = self._scrollTarget or cur
+    local settling = math.abs(target - cur) < 0.5
+    cur = settling and target or (cur + (target - cur) * math.min(1, elapsed * C.SCROLL_ANIM_SPEED))
+    self._logicalScroll = cur
+    local scroll = cur + (self._headerH or 0)
+    -- Pixel-snap only the settled frame (crisp text at rest); leave in-flight frames fractional for a smooth slide.
+    if settling then scroll = OrbitEngine.Pixel:Snap(scroll, self.scrollChild:GetEffectiveScale()) end
+    self.scrollFrame:SetVerticalScroll(scroll)
+    self:UpdateStickyHeader()
+    if settling then self._scrollAnimFrame:Hide() end
+end
+
+-- Ease (or, under reduced motion, jump) the scroll to a clamped logical target.
+function Plugin:StartScrollTo(target)
+    local uMax = self._uMax or 0
+    if target < 0 then target = 0 elseif target > uMax then target = uMax end
+    self._scrollTarget = target
+    if self._reduceMotion then
+        self._logicalScroll = target
+        self.scrollFrame:SetVerticalScroll(OrbitEngine.Pixel:Snap(target + (self._headerH or 0), self.scrollChild:GetEffectiveScale()))
+        self:UpdateStickyHeader()
+        return
+    end
+    if not self._scrollAnimFrame then
+        self._scrollAnimFrame = CreateFrame("Frame")
+        self._scrollAnimFrame:SetScript("OnUpdate", function(_, elapsed) self:ScrollAnimStep(elapsed) end)
+    end
+    self._scrollAnimFrame:Show()
 end
 
 function Plugin:OnScroll(delta)
-    local sf = self.scrollFrame
-    if not sf or not self.scrollChild then return end
-    local range = math.max(0, self.scrollChild:GetHeight() - sf:GetHeight())
-    if range <= 0 then return end
-    local v = sf:GetVerticalScroll() - delta * C.SCROLL_SPEED
-    if v < 0 then v = 0 elseif v > range then v = range end
-    sf:SetVerticalScroll(v)
+    -- A scenario flyout is open with clipping off; scrolling now would spill rows past the box edge.
+    if self._flyoutOpen then return end
+    if not self._stickyActive or (self._uMax or 0) <= 0 then return end
+    local cur = self._logicalScroll or 0
+    local from = self._scrollTarget or cur
+    -- Reversal: the wheel opposes the in-flight ease — seed from where we visibly are, not the un-reached target, so a correcting tick doesn't scroll the wrong way first.
+    if (from - cur) * delta > 0 then from = cur end
+    self:StartScrollTo(self:NextSnap(from, delta))
+end
+
+-- Bring the just-super-tracked quest into view (called after the relayout that a SUPER_TRACKING_CHANGED triggers), unless it's already on screen.
+function Plugin:ScrollToSuperTracked()
+    if not self._stickyActive then return end
+    local id = C_SuperTrack.GetSuperTrackedQuestID()
+    if not id or id == 0 then return end
+    local key = "quest:" .. id
+    local n, keys, snapY = self._snapCount or 0, self._snapKeys, nil
+    for i = 1, n do
+        if keys[i] == key then snapY = self._snapPoints[i]; break end
+    end
+    if not snapY then return end
+    local target = snapY - (self._headerH or 0)
+    local cur = self._logicalScroll or 0
+    local viewportH = (self._boxH or 0) - (self._headerH or 0)
+    if target >= cur - 2 and target <= cur + viewportH - 2 then return end
+    self:StartScrollTo(target)
 end
 
 -- [ COLLAPSE STATE ]---------------------------------------------------------------------------------
@@ -418,6 +584,18 @@ function Plugin:SetSectionCollapsed(key, collapsed)
     local state = Orbit.db.AccountSettings.ObjectivesCollapseState
     if not state then state = {}; Orbit.db.AccountSettings.ObjectivesCollapseState = state end
     state[key] = collapsed or nil
+end
+
+-- [ SORT ]-------------------------------------------------------------------------------------------
+-- Proximity sort must re-read distances as the player moves; run a light ticker that just flips the refresh boolean while that mode is active, and stop it otherwise.
+function Plugin:UpdateSortTicker()
+    local proximity = self:GetSetting(SYSTEM_ID, "SortMode") == "proximity"
+    if proximity and not self._sortTicker then
+        self._sortTicker = C_Timer.NewTicker(C.SORT_PROXIMITY_INTERVAL, function() self:ScheduleRefresh() end)
+    elseif not proximity and self._sortTicker then
+        self._sortTicker:Cancel()
+        self._sortTicker = nil
+    end
 end
 
 -- [ APPLY SETTINGS ]---------------------------------------------------------------------------------
@@ -456,11 +634,14 @@ function Plugin:ApplySettings()
     self.scrollFrame:ClearAllPoints()
     self.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", -ov, -inset)
     self.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", ov, inset)
+    self:AnchorStickyHost()
 
     Orbit.ObjectivesSkin:RefreshCache(self)
 
     if Orbit.OOCFadeMixin then Orbit.OOCFadeMixin:ApplyOOCFade(frame, self, SYSTEM_ID) end
     self:UpdateZoneFilters()
+    self:UpdateSortTicker()
+    self._reduceMotion = self:GetSetting(SYSTEM_ID, "SmoothScroll") == false
 
     self:ApplyContainerHeight()
     -- Settings/theme/geometry changed — force the next layout past the content-fingerprint early-out.
@@ -553,6 +734,16 @@ function Plugin:GetContentInset()
         borderInset = OrbitEngine.Pixel:BorderInset(self.frame, 1)
     end
     return borderInset + C.CONTENT_PADDING
+end
+
+-- Pin the sticky-header clip host over the content rect (inside the border/inset). The overlay button, mirrored from the topmost visible section header, sits at this rect's top edge.
+function Plugin:AnchorStickyHost()
+    local host = self.stickyHost
+    if not host then return end
+    local inset = self:GetContentInset()
+    host:ClearAllPoints()
+    host:SetPoint("TOPLEFT", self.frame, "TOPLEFT", inset, -inset)
+    host:SetPoint("BOTTOMRIGHT", self.frame, "BOTTOMRIGHT", -inset, inset)
 end
 
 -- [ BACKDROP ]---------------------------------------------------------------------------------------

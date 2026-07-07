@@ -281,14 +281,22 @@ local function BuildTooltips(body, section, requestRelayout)
         Orbit.Tooltips:ApplyScale()
     end)
 
+    local darkenSlider = Layout:CreateSlider(options, L.PLU_TIP_DARKEN, 0, 1.0, 0.05, function(v)
+        return string.format("%d%%", math_floor(v * UI_SCALE_PERCENT + 0.5))
+    end, GetAccountSetting("TooltipDarken", 0), function(val)
+        SetAccountSetting("TooltipDarken", math_floor(val * 20 + 0.5) / 20)
+        Orbit.Tooltips:ApplyStyle()
+    end)
+
     local function toggle(key, label, tip, default)
         return Layout:CreateCheckbox(options, label, tip, GetAccountSetting(key, default), function(checked)
             SetAccountSetting(key, checked)
+            Orbit.Tooltips:RefreshPreview()
         end, { compact = true })
     end
 
     local optionsH = BuildGrouped(options, {
-        { header = L.PLU_TIP_GRP_APPEARANCE, dropdowns = { styleDD, anchorDD }, sliders = { scaleSlider } },
+        { header = L.PLU_TIP_GRP_APPEARANCE, dropdowns = { styleDD, anchorDD }, sliders = { scaleSlider, darkenSlider } },
         { header = L.PLU_TIP_GRP_ENHANCE, checks = {
             toggle("TooltipHideCombat",      L.PLU_TIP_HIDE_COMBAT,      L.PLU_TIP_HIDE_COMBAT_TT,      true),
             toggle("TooltipHideHealthBar",   L.PLU_TIP_HIDE_HEALTHBAR,   L.PLU_TIP_HIDE_HEALTHBAR_TT,   true),
@@ -296,6 +304,8 @@ local function BuildTooltips(body, section, requestRelayout)
             toggle("TooltipShowTarget",      L.PLU_TIP_SHOW_TARGET,      L.PLU_TIP_SHOW_TARGET_TT,      false),
             toggle("TooltipGuildRank",       L.PLU_TIP_GUILD_RANK,       L.PLU_TIP_GUILD_RANK_TT,       true),
             toggle("TooltipAllegiance",      L.PLU_TIP_ALLEGIANCE,       L.PLU_TIP_ALLEGIANCE_TT,       false),
+            toggle("TooltipShowMount",       L.PLU_TIP_SHOW_MOUNT,       L.PLU_TIP_SHOW_MOUNT_TT,       false),
+            toggle("TooltipShowIlvl",        L.PLU_TIP_SHOW_ILVL,        L.PLU_TIP_SHOW_ILVL_TT,        false),
             toggle("TooltipShowIDs",         L.PLU_TIP_SHOW_IDS,         L.PLU_TIP_SHOW_IDS_TT,         false),
         } },
     })
@@ -720,6 +730,7 @@ function Orbit._AC.CreateQoLContent(parent)
     }
     -- Build accordion sections
     local sections = {}
+    local tooltipsSection
     local LayoutSections
     for _, def in ipairs(sectionDefs) do
         local section = Layout:CreateAccordion(scrollChild, def[1])
@@ -747,6 +758,7 @@ function Orbit._AC.CreateQoLContent(parent)
             section:SetContentHeight(Layout:Stack(body, 0, STACK_GAP))
         end
         table.insert(sections, section)
+        if def[1] == L.PLU_QOL_SEC_TOOLTIPS then tooltipsSection = section end
     end
     -- Layout + reflow
     LayoutSections = function()
@@ -761,14 +773,42 @@ function Orbit._AC.CreateQoLContent(parent)
         end
         scrollFrame:UpdateContentHeight(math.abs(y) + 10)
     end
-    for _, section in ipairs(sections) do section._onToggle = LayoutSections end
+    -- Show the tooltip preview only while its section is the open one and the QoL tab is visible.
+    local function SyncPreview()
+        if content:IsShown() and tooltipsSection and tooltipsSection:IsExpanded() then
+            Orbit.Tooltips:ShowPreview(content)
+        else
+            Orbit.Tooltips:HidePreview()
+        end
+    end
+
+    -- Single accordion open at a time: expanding one collapses the rest. suppressToggle stops the collapse cascade from re-entering, and lets search expand several matches at once.
+    local suppressToggle = false
+    local function CollapseOthers(except)
+        suppressToggle = true
+        for _, s in ipairs(sections) do
+            if s ~= except and s:IsExpanded() then s:SetExpanded(false) end
+        end
+        suppressToggle = false
+    end
+    for _, section in ipairs(sections) do
+        section._onToggle = function()
+            if suppressToggle then return end
+            if section:IsExpanded() then CollapseOthers(section) end
+            LayoutSections()
+            SyncPreview()
+        end
+    end
     LayoutSections()
+    content:HookScript("OnShow", SyncPreview)
+    content:HookScript("OnHide", function() Orbit.Tooltips:HidePreview() end)
 
     searchBox:SetScript("OnTextChanged", function(self)
         SearchBoxTemplate_OnTextChanged(self)
         local query = self:GetText():lower()
         local isSearching = query ~= ""
 
+        suppressToggle = true
         for _, section in ipairs(sections) do
             if isSearching then
                 if string.find(section.searchName, query, 1, true) then
@@ -782,7 +822,9 @@ function Orbit._AC.CreateQoLContent(parent)
                 section:SetExpanded(false)
             end
         end
+        suppressToggle = false
         LayoutSections()
+        SyncPreview()
     end)
     return content
 end

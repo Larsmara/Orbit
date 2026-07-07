@@ -64,7 +64,7 @@ local function GetEnabledKinds()
     local acct = GetAcct()
     local kinds = {}
     for _, k in ipairs(Orbit.Spotlight.Kinds) do
-        kinds[k.kind] = k.prefixOnly or acct["Spotlight_Src_" .. k.settingKey] ~= false
+        kinds[k.kind] = acct["Spotlight_Src_" .. k.settingKey] ~= false
     end
     return kinds
 end
